@@ -15,7 +15,7 @@ jobs:
           node-version: '24'
           cache: npm
       - run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
-      - run: npm ci --include=dev
+      - run: npm ci --include=dev --legacy-peer-deps
       - run: npm run check
       - run: npm audit --omit=dev --audit-level=high
       - run: docker build -t enigme-bot:ci .
