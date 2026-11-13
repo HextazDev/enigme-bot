@@ -10,7 +10,7 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
   await t.test('endSeason: returns alreadyEnded=true if plateau is already season_ended', async () => {
     let plateau = await Plateau.findByPk(1);
     if (!plateau) {
-      plateau = await Plateau.create({ id: 1, tour: 10, enigme_status: 'season_ended' });
+      await Plateau.create({ id: 1, tour: 10, enigme_status: 'season_ended' });
     } else {
       await plateau.update({ tour: 10, enigme_status: 'season_ended' });
     }

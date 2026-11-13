@@ -3,7 +3,7 @@
 // Do not update this oracle to match a new implementation.
 exports.dice = function (joueur, random) {
   const Math = { floor: globalThis.Math.floor, min: globalThis.Math.min, random };
-        let de = 0;
+        let de;
         if (joueur.type_de === 'double') {
             de = Math.floor(Math.random() * 19) + 2; // 2 à 20
             joueur.type_de = 'normal';
