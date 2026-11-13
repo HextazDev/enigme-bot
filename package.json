@@ -24,7 +24,7 @@
     "discord.js": "^14.28.1",
     "dotenv": "^18.0.10",
     "node-cron": "^4.6.0",
-    "p-queue": "^6.6.2",
+    "p-queue": "^10.0.0",
     "sequelize": "^6.37.7",
     "sqlite3": "^6.0.1"
   },
