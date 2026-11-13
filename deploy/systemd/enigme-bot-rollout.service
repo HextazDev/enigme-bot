@@ -1,0 +1,17 @@
+[Unit]
+Description=Enigme-bot prod pull rollout with automatic rollback
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/homelab/discord-bots/enigme-bot
+Environment=CONTAINER_NAME=enigme-bot
+Environment=BOT_IMAGE=ghcr.io/hextazdev/enigme-bot:prod
+Environment=ENV_FILE=.env
+Environment=DATA_DIR=data
+Environment=ROLLOUT_SCRIPT=/usr/local/bin/enigme-bot-rollout.sh
+Environment=DISCORD_WEBHOOK_URL_FILE=/home/nolhan/.config/enigme-bot/discord-webhook-url
+Environment=NOTIFY_PROJECT=Enigme-bot (prod)
+ExecStart=/usr/local/bin/tournamenthub-rollout-notify
