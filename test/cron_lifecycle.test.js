@@ -52,7 +52,7 @@ test('Lifecycle & Crons Suite', async (t) => {
     // Create a plateau with season_ended at tour 12 (early stop)
     let plateau = await Plateau.findByPk(1);
     if (!plateau) {
-      plateau = await Plateau.create({ id: 1, tour: 12, enigme_status: 'season_ended' });
+      await Plateau.create({ id: 1, tour: 12, enigme_status: 'season_ended' });
     } else {
       await plateau.update({ tour: 12, enigme_status: 'season_ended' });
     }
@@ -237,7 +237,7 @@ test('Lifecycle & Crons Suite', async (t) => {
 
     let player = await Joueur.findByPk('123456789');
     if (!player) {
-      player = await Joueur.create({ discord_id: '123456789', a_le_droit_de_jouer: true });
+      await Joueur.create({ discord_id: '123456789', a_le_droit_de_jouer: true });
     } else {
       await player.update({ a_le_droit_de_jouer: true });
     }
