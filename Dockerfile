@@ -4,7 +4,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --include=dev
+# sqlite3@6 prebuilt binaries require GLIBC_2.38 but the runtime stage is
+# node:24-bookworm-slim (glibc 2.36) -> ERR_DLOPEN_FAILED at boot.
+# Build native modules from source inside the bookworm build stage so the
+# compiled bindings match the runtime glibc.
+RUN npm ci --include=dev --build-from-source
 COPY tsconfig.json deploy-commands.ts ./
 COPY scripts ./scripts
 COPY src ./src
