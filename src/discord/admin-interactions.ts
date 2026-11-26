@@ -7,6 +7,7 @@ import * as adminService from '../services/admin';
 import { programEnigma } from '../services/enigma';
 import { invalidateBoardCache } from '../utils/canvas';
 import { announce } from './channels';
+import { clearAllPendingTimers, clearPendingTimer } from './pending-timers';
 import config = require('../config');
 
 const optional = (value: string) => (value.trim() ? value.trim() : null);
@@ -17,6 +18,7 @@ export async function handleProgrammerEnigmeModal(interaction: ModalSubmitIntera
   const answer = field('reponse');
   const hints: [string | null, string | null, string | null] = [optional(field('indice_1')), optional(field('indice_2')), optional(field('indice_3'))];
   await programEnigma({ text, answer, hints });
+  console.log(`[ADMIN] Énigme programmée par ${interaction.user.id} (${hints.filter(Boolean).length} indice(s)).`);
   await editReply(interaction, { content: `✅ **Énigme programmée avec succès !**\n\n📝 **Titre :** ${text.split('\n')[0] || 'Énigme du jour'}\n🔑 **Réponse :** ${answer.trim()}\n`
     + `💡 **Indices :** ${hints.filter(Boolean).length} indice(s) programmé(s)\n\n📣 L'énigme sera publiée automatiquement à **17h** dans le salon énigme.` });
 }
@@ -60,8 +62,11 @@ async function startWizard(i: StringSelectMenuInteraction | ButtonInteraction): 
     const mode = getMode(modeId);
     if (!mode) throw new GameRuleError('MODE', 'Impossible de démarrer : mode introuvable !');
     const { star } = await adminService.startSeason(modeId, variantId, mapId);
+    clearAllPendingTimers();
     invalidateBoardCache();
-    await editReply(i, { embeds: [], components: [], content: `🎉 **La saison a été initialisée avec succès !**\n\n• **Mode :** ${mode.emoji} **${mode.name}**\n• **Variante :** 📜 **${variantId}**\n• **Map :** 🗺️ **${mapId}**\n\nL'étoile a été placée sur la case **${star}**.\nLe plateau est prêt à accueillir les joueurs ! Utilisez \`/jouer\` pour rejoindre la partie.` });
+    console.log(`[ADMIN] Nouvelle saison initialisée (${modeId}/${variantId}/${mapId}) par ${i.user.id}.`);
+    const starConfirm = mode.hasStars ? `\nL'étoile a été placée sur la case **${star}**.` : '';
+    await editReply(i, { embeds: [], components: [], content: `🎉 **La saison a été initialisée avec succès !**\n\n• **Mode :** ${mode.emoji} **${mode.name}**\n• **Variante :** 📜 **${variantId}**\n• **Map :** 🗺️ **${mapId}**${starConfirm}\nLe plateau est prêt à accueillir les joueurs ! Utilisez \`/jouer\` pour rejoindre la partie.` });
     const ping = config.roleEnigmeId ? `<@&${config.roleEnigmeId}> ` : '';
     const starLine = mode.hasStars ? `\n🌟 L'étoile a atterri sur la case **${star}** !\n` : '';
     await announce(i.client, `🏁 ${ping}**UNE NOUVELLE SAISON COMMENCE !** 🏁\n\nLe plateau a été réinitialisé par un administrateur avec les configurations suivantes :\n• **Mode de jeu :** ${mode.emoji} **${mode.name}**\n• **Variante :** 📜 **${variantId}**\n• **Map / Plateau :** 🗺️ **${mapId}**\n${starLine}\nTous les scores sont remis à zéro. Utilisez la commande \`/jouer\` pour lancer votre dé et faire partie de l'aventure ! Bonne chance à tous ! 🎲✨`);
@@ -76,17 +81,22 @@ export async function handleAdminComponent(i: StringSelectMenuInteraction | Butt
   if (id.startsWith('admin_kick_confirm_')) {
     const userId = id.slice('admin_kick_confirm_'.length);
     await adminService.kickPlayer(userId);
+    clearPendingTimer(userId);
     console.log(`[ADMIN] Joueur ${userId} exclu.`);
     await editReply(i, { content: `✅ Le joueur <@${userId}> a été définitivement supprimé de la base de données.`, components: [] });
   } else if (id === 'admin_kick_cancel') {
     await editReply(i, { content: "❌ L'exclusion a été annulée.", components: [] });
   } else if (i.isStringSelectMenu() && id.startsWith('admin_give_objet_')) {
     const userId = id.slice('admin_give_objet_'.length);
-    await adminService.giveItem(userId, selectedValue(i.values));
-    await editReply(i, { content: `✅ L'objet "${selectedValue(i.values)}" a été donné à <@${userId}>.`, components: [] });
+    const item = selectedValue(i.values);
+    await adminService.giveItem(userId, item);
+    console.log(`[ADMIN] Objet "${item}" donné à ${userId}.`);
+    await editReply(i, { content: `✅ L'objet "${item}" a été donné à <@${userId}>.`, components: [] });
   } else if (i.isStringSelectMenu() && id.startsWith('admin_remove_objet_')) {
     const userId = id.slice('admin_remove_objet_'.length);
-    await adminService.removeItem(userId, selectedValue(i.values));
-    await editReply(i, { content: `✅ L'objet "${selectedValue(i.values)}" a été retiré à <@${userId}>.`, components: [] });
+    const item = selectedValue(i.values);
+    await adminService.removeItem(userId, item);
+    console.log(`[ADMIN] Objet "${item}" retiré à ${userId}.`);
+    await editReply(i, { content: `✅ L'objet "${item}" a été retiré à <@${userId}>.`, components: [] });
   } else throw new GameRuleError('UNKNOWN', 'Action non disponible.');
 }

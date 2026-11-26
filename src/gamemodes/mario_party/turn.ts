@@ -10,6 +10,7 @@ import { withGameLock, withScheduledLock } from '../../game/transaction';
 import { getActiveBoardCases } from '../registry';
 import { gameNow } from '../../utils/clock';
 import { parisClock } from '../../utils/time';
+import { isSaturdayClosed } from '../../services/season';
 import { applyLanding } from './landing';
 import { ITEMS } from './items';
 import { applyPurchase, prepareShop, Purchase } from './shop';
@@ -33,6 +34,10 @@ async function load(userId: string, transaction: Transaction): Promise<State> {
 }
 function requireAwake(joueur: Joueur): void {
   if (joueur.est_fantome) throw new GameRuleError('GHOST', '👻 Tu es en mode fantôme, tu ne peux pas jouer !');
+}
+function requireBoardOpen(plateau: Plateau, now: Date): void {
+  if (plateau.enigme_status === 'active') throw new GameRuleError('LOCKED', "Le plateau est verrouillé ! Il faut d'abord résoudre l'énigme du jour.");
+  if (isSaturdayClosed(plateau, now)) throw new GameRuleError('SATURDAY', "C'est samedi : pas de lancer de dé aujourd'hui.");
 }
 function requirePending(joueur: Joueur, type: MarioStop): MarioPending {
   const pending = marioPending(joueur.action_en_attente);
@@ -85,8 +90,7 @@ export async function startTurn(actor: Actor, options: Options = {}): Promise<{ 
     const { joueur, plateau } = state;
     if (!joueur.a_le_droit_de_jouer) throw new GameRuleError('NOT_ALLOWED', "Tu n'as pas le droit de jouer.");
     requireAwake(joueur);
-    if (plateau.enigme_status === 'active') throw new GameRuleError('LOCKED', "Le plateau est verrouillé ! Il faut d'abord résoudre l'énigme du jour.");
-    if (parisClock(opts.now).weekday === 6) throw new GameRuleError('SATURDAY', "C'est samedi : pas de lancer de dé aujourd'hui.");
+    requireBoardOpen(plateau, opts.now);
     if (joueur.action_en_attente || joueur.cases_restantes > 0) throw new GameRuleError('IN_PROGRESS', "Termine d'abord ton déplacement en cours.");
     await saveTurnSnapshot(joueur, plateau, transaction);
     const roll = rollDice(joueur, opts.random);
@@ -138,6 +142,7 @@ export async function continueTurn(actor: Actor, options: Options = {}): Promise
   const opts = withDefaults(options);
   return run(actor.id, async transaction => {
     const state = await load(actor.id, transaction);
+    requireBoardOpen(state.plateau, opts.now);
     if (state.joueur.action_en_attente) throw new GameRuleError('PENDING', 'Un choix t’attend encore sur ta case.');
     if (state.joueur.cases_restantes <= 0) throw new GameRuleError('NO_MOVE', "Tu n'as pas de déplacement en cours.");
     return move(state, actor, null, transaction, opts);
@@ -149,6 +154,7 @@ async function resolve<T>(actor: Actor, type: MarioStop, options: Options,
   const opts = withDefaults(options);
   return run(actor.id, async transaction => {
     const state = await load(actor.id, transaction);
+    requireBoardOpen(state.plateau, opts.now);
     requirePending(state.joueur, type);
     const result = await action(state, transaction, opts);
     state.joueur.action_en_attente = null;
@@ -174,6 +180,7 @@ export async function buyFromShop(actor: Actor, itemId: string, replaceIndex: nu
   const opts = withDefaults(options);
   return run(actor.id, async transaction => {
     const state = await load(actor.id, transaction);
+    requireBoardOpen(state.plateau, opts.now);
     requirePending(state.joueur, 'boutique');
     const purchase = applyPurchase(state.joueur, itemId, replaceIndex);
     if (purchase.kind === 'needs_replacement') return { purchase, move: null };
@@ -185,9 +192,11 @@ export function leaveShop(actor: Actor, options: Options = {}) {
   return resolve(actor, 'boutique', options, async () => ({}));
 }
 
-export async function booTargets(actor: Actor, type: 'pieces' | 'etoile'): Promise<Joueur[]> {
+export async function booTargets(actor: Actor, type: 'pieces' | 'etoile', options: Options = {}): Promise<Joueur[]> {
+  const opts = withDefaults(options);
   return run(actor.id, async transaction => {
-    const { joueur } = await load(actor.id, transaction);
+    const { joueur, plateau } = await load(actor.id, transaction);
+    requireBoardOpen(plateau, opts.now);
     requirePending(joueur, 'boo');
     if (type === 'etoile' && joueur.pieces < BOO_STAR_PRICE) throw new GameRuleError('FUNDS', "Tu n'as pas assez de pièces pour voler une étoile.");
     const players = await Joueur.findAll({ transaction });
@@ -246,12 +255,19 @@ export async function expirePending(actor: Actor, token: string, options: Option
   });
 }
 
-export async function unblockGhost(userId: string): Promise<boolean> {
+export async function unblockGhost(userId: string, options: Options = {}): Promise<boolean> {
+  const opts = withDefaults(options);
   return run(userId, async transaction => {
+    const plateau = await Plateau.findByPk(1, { transaction });
+    if (!plateau || plateau.enigme_status === 'season_ended') return false;
     const joueur = await Joueur.findByPk(userId, { transaction });
     if (!joueur || !joueur.est_fantome || joueur.fantome_unblock_used) return false;
     joueur.est_fantome = false;
     joueur.fantome_unblock_used = true;
+    joueur.jours_inactifs = 0;
+    if (plateau.enigme_status === 'finished' && !joueur.a_joue_ce_tour && !isSaturdayClosed(plateau, opts.now)) {
+      joueur.a_le_droit_de_jouer = true;
+    }
     await joueur.save({ transaction });
     return true;
   });
@@ -272,8 +288,8 @@ export async function useItem(actor: Actor, itemKey: string, index: number, pipe
   return run(actor.id, async transaction => {
     const { joueur, plateau, cases } = await load(actor.id, transaction);
     requireAwake(joueur);
-    if (plateau.enigme_status === 'active') throw new GameRuleError('LOCKED', "Le plateau est verrouillé ! Il faut d'abord résoudre l'énigme du jour.");
-    if (!joueur.a_le_droit_de_jouer || parisClock(opts.now).weekday === 6 || joueur.action_en_attente || joueur.cases_restantes > 0) {
+    requireBoardOpen(plateau, opts.now);
+    if (!joueur.a_le_droit_de_jouer || joueur.action_en_attente || joueur.cases_restantes > 0) {
       throw new GameRuleError('NOT_ALLOWED', "Tu ne peux pas utiliser d'objet pour le moment (tu as déjà joué ou c'est bloqué).");
     }
     const item = ITEMS[itemKey];

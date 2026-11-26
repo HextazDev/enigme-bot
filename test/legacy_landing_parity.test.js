@@ -122,10 +122,12 @@ function pickFields(row) {
  * on this landing (hidden block, coin trap) before a redistribution or a lottery won by themself.
  */
 function isStaleCopyException(events) {
-  const coinsChangedEarly = events.some(e => ['hidden_twenty', 'hidden_ten', 'hidden_five'].includes(e.kind)
-    || (['coin_trap_transfer', 'coin_trap_loss'].includes(e.kind) && e.amount > 0));
-  const readsAllPlayers = events.some(e => e.kind === 'bowser_redistribute' || (e.kind === 'fate_lottery' && e.targetId === 'p0'));
-  return coinsChangedEarly && readsAllPlayers;
+  const balanceChangedEarly = events.some(e => ['hidden_star', 'hidden_twenty', 'hidden_ten', 'hidden_five'].includes(e.kind)
+    || (['coin_trap_transfer', 'coin_trap_loss'].includes(e.kind) && e.amount > 0)
+    || ['star_trap_transfer', 'star_trap_loss'].includes(e.kind));
+  const readsAllPlayers = events.some(e => e.kind === 'bowser_redistribute' || e.kind === 'bowser_gift' || e.kind === 'bowser_last'
+    || (e.kind === 'fate_lottery' && e.targetId === 'p0'));
+  return balanceChangedEarly && readsAllPlayers;
 }
 
 test('every Mario landing effect matches the frozen legacy implementation for identical state and draws', async () => {

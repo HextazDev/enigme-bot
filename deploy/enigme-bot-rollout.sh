@@ -24,10 +24,31 @@ if [[ -n "$OLD_ID" && "$OLD_ID" == "$NEW_ID" ]]; then
 fi
 
 echo "[ROLLOUT] deploying $NEW_ID (was ${OLD_ID:-none})"
-docker rm -f "$NAME"
-if ! docker run -d --name "$NAME" --restart unless-stopped --env-file "$ENV_FILE" -v "$PWD/$DATA_DIR:/app/data" "$IMAGE"; then
-  echo "[ROLLOUT] CRITICAL: Rollback failed to start"
+if docker inspect "$NAME" >/dev/null 2>&1; then
+  docker stop -t 15 "$NAME" >/dev/null 2>&1 || true
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+fi
+
+start_container() {
+  local target_image="$1"
+  docker run -d --name "$NAME" --restart unless-stopped --env-file "$ENV_FILE" -v "$PWD/$DATA_DIR:/app/data" "$target_image"
+}
+
+rollback() {
+  echo "[ROLLOUT] rolling back to ${OLD_ID:-previous}"
+  docker stop -t 15 "$NAME" >/dev/null 2>&1 || true
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  if [[ -n "$OLD_ID" ]] && start_container "$OLD_ID" && sleep "$CHECK_DELAY" && [[ "$(docker inspect -f '{{.State.Running}}' "$NAME")" == "true" ]]; then
+    echo "[ROLLOUT] Rolled back and verified ready"
+    exit 1
+  fi
+  echo "[ROLLOUT] CRITICAL: Rollback failed"
   exit 1
+}
+
+if ! start_container "$IMAGE"; then
+  echo "[ROLLOUT] new container failed to start"
+  rollback
 fi
 
 sleep "$CHECK_DELAY"
@@ -36,11 +57,5 @@ if [[ "$(docker inspect -f '{{.State.Running}}' "$NAME")" == "true" ]]; then
   exit 0
 fi
 
-echo "[ROLLOUT] new container not running; rolling back to ${OLD_ID:-previous}"
-docker rm -f "$NAME"
-if [[ -n "$OLD_ID" ]] && docker run -d --name "$NAME" --restart unless-stopped --env-file "$ENV_FILE" -v "$PWD/$DATA_DIR:/app/data" "$OLD_ID" && sleep "$CHECK_DELAY" && [[ "$(docker inspect -f '{{.State.Running}}' "$NAME")" == "true" ]]; then
-  echo "[ROLLOUT] Rolled back and verified ready"
-  exit 1
-fi
-echo "[ROLLOUT] CRITICAL: Rollback failed"
-exit 1
+echo "[ROLLOUT] new container not running after ${CHECK_DELAY}s"
+rollback

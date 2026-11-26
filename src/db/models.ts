@@ -86,6 +86,13 @@ export class TourSnapshot extends Model<InferAttributes<TourSnapshot>, InferCrea
   declare plateau_position_etoile: CreationOptional<number | null>;
   declare plateau_pieges_actifs: CreationOptional<JsonObject[] | null>;
   declare plateau_blocs_caches: CreationOptional<JsonObject | null>;
+  declare plateau_mode_data: CreationOptional<JsonObject | null>;
+  declare mode_data: CreationOptional<JsonObject | null>;
+  declare boutique_du_jour: CreationOptional<string[] | null>;
+  declare stat_cases_chance: CreationOptional<number | null>;
+  declare stat_cases_malchance: CreationOptional<number | null>;
+  declare stat_cases_avancees: CreationOptional<number | null>;
+  declare stat_objets_utilises: CreationOptional<number | null>;
   declare autres_joueurs_snapshot: CreationOptional<JsonObject[] | null>;
 }
 
@@ -355,6 +362,13 @@ TourSnapshot.init({
   plateau_position_etoile: DataTypes.INTEGER,
   plateau_pieges_actifs: DataTypes.JSON,
   plateau_blocs_caches: DataTypes.JSON,
+  plateau_mode_data: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
+  mode_data: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
+  boutique_du_jour: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
+  stat_cases_chance: { type: DataTypes.INTEGER, allowNull: true, defaultValue: null },
+  stat_cases_malchance: { type: DataTypes.INTEGER, allowNull: true, defaultValue: null },
+  stat_cases_avancees: { type: DataTypes.INTEGER, allowNull: true, defaultValue: null },
+  stat_objets_utilises: { type: DataTypes.INTEGER, allowNull: true, defaultValue: null },
   // Snapshot des autres joueurs (pour les vols/échanges)
   autres_joueurs_snapshot: DataTypes.JSON
 }, {
@@ -381,5 +395,8 @@ Plateau.addHook('afterFind', result => {
     const data = record(plateau.mode_data, 'données plateau');
     if (plateau.game_mode === 'ile_defis') parseIslandBoardData(data);
     else if (data.paris_ouverts !== undefined && typeof data.paris_ouverts !== 'boolean') throw new TypeError('État des paris invalide');
+    if (data.marche_noir_date !== undefined && typeof data.marche_noir_date !== 'string') throw new TypeError('Date Marché Noir invalide');
+    if (data.propositions_jugees !== undefined) strings(data.propositions_jugees, 'propositions jugées');
+    if (data.last_winner_id !== undefined && data.last_winner_id !== null && typeof data.last_winner_id !== 'string') throw new TypeError('Vainqueur précédent invalide');
   }
 });

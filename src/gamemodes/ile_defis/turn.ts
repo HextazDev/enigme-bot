@@ -195,6 +195,7 @@ export async function resolveChallenge(actor: Actor, stop: IleStop, choice: numb
   return run(actor.id, async transaction => {
     const state = await load(actor.id, transaction);
     const { joueur, plateau } = state;
+    if (plateau.enigme_status === 'active') throw new GameRuleError('LOCKED', "Le plateau est verrouillé ! Il faut d'abord résoudre l'énigme du jour.");
     const pending = requirePending(joueur, stop);
     joueur.action_en_attente = null;
     const endTurn = async (result: Omit<ChallengeResult, 'move'>) => {
@@ -248,8 +249,8 @@ export async function resolveChallenge(actor: Actor, stop: IleStop, choice: numb
   });
 }
 
-/** Timer expiry: gates and cascades fail, vines jump automatically, crossroads take the first path. */
-export async function expirePending(actor: Actor, token: string, options: Options = {}): Promise<{ type: IleStop; roll: number; move: MoveOutcome | null } | null> {
+/** Timer expiry: gates and cascades fail, vines jump automatically, crossroads take the first path with the same 50% fall risk. */
+export async function expirePending(actor: Actor, token: string, options: Options = {}): Promise<{ type: IleStop; roll: number; fellTo?: number; move: MoveOutcome | null } | null> {
   const random = options.random ?? Math.random;
   return run(actor.id, async transaction => {
     const state = await load(actor.id, transaction);
@@ -264,7 +265,15 @@ export async function expirePending(actor: Actor, token: string, options: Option
       return { type, roll, move: await move(state, 'liane', transaction, random) };
     }
     if (type === 'intersection') {
-      joueur.temp_choix_direction = at(findCase(joueur.position).next, 0);
+      const current = findCase(joueur.position);
+      if (random() < 0.5) {
+        joueur.position = waterLanding(current);
+        joueur.cases_restantes = 0;
+        joueur.temp_choix_direction = null;
+        await joueur.save({ transaction });
+        return { type, roll: 0, fellTo: joueur.position, move: null };
+      }
+      joueur.temp_choix_direction = at(current.next, 0);
       return { type, roll: 0, move: await move(state, 'intersection', transaction, random) };
     }
     joueur.cases_restantes = 0;
@@ -310,11 +319,16 @@ export async function recoverLegacyPending(options: Options = {}): Promise<strin
 
 export async function unblockGhost(userId: string): Promise<boolean> {
   return run(userId, async transaction => {
+    const plateau = await Plateau.findByPk(1, { transaction });
+    if (!plateau || plateau.enigme_status === 'season_ended') return false;
     const joueur = await Joueur.findByPk(userId, { transaction });
     if (!joueur || !joueur.est_fantome || joueur.fantome_unblock_used) return false;
     joueur.est_fantome = false;
     joueur.fantome_unblock_used = true;
-    joueur.a_le_droit_de_jouer = true;
+    joueur.jours_inactifs = 0;
+    if (plateau.enigme_status === 'finished' && !joueur.a_joue_ce_tour) {
+      joueur.a_le_droit_de_jouer = true;
+    }
     await joueur.save({ transaction });
     return true;
   });

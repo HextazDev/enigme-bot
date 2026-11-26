@@ -168,4 +168,110 @@ test('PARITY-03: on the last turn, stopping exactly on the closed shop resolves 
   assert.equal(p1.action_en_attente, null);
 });
 
+test('GAME-01 & TURN-01: Saturday before 10h Paris is still playable, 10h or paris_ouverts closes it, and in-progress moves block a new roll', async () => {
+  const sat0830Paris = new Date('2026-10-10T06:30:00Z'); // 08:30 CEST
+  const sat1000Paris = new Date('2026-10-10T08:00:00Z'); // 10:00 CEST
+  await setup({ player: { position: 1 } });
+  const { move } = await turn.startTurn(actor, { random: seq([die(2)]), now: sat0830Paris });
+  assert.equal(move.kind, 'landed');
+
+  await setup({ player: { position: 1 } });
+  await assert.rejects(turn.startTurn(actor, { random: seq([die(2)]), now: sat1000Paris }), code('SATURDAY'));
+
+  await setup({ player: { position: 1 }, board: { mode_data: { paris_ouverts: true } } });
+  await assert.rejects(turn.startTurn(actor, opts([die(2)])), code('SATURDAY'));
+
+  await setup({ player: { position: 8, cases_restantes: 2, action_en_attente: { type: 'etoile', case: 8, token: 't' } } });
+  await assert.rejects(turn.startTurn(actor, opts([die(2)])), code('IN_PROGRESS'));
+});
+
+test('PEND-09: an active enigma locks pending choices (star, shop, Boo, continueTurn)', async () => {
+  await setup({ player: { position: 10, pieces: 30, cases_restantes: 1, action_en_attente: { type: 'etoile', case: 10, token: 't' } },
+    board: { enigme_status: 'active', position_etoile: 10 } });
+  await assert.rejects(turn.resolveStar(actor, true, opts([])), code('LOCKED'));
+
+  await setup({ player: { position: 23, pieces: 30, cases_restantes: 1, boutique_du_jour: ['champignon'], action_en_attente: { type: 'boutique', case: 23, token: 't' } },
+    board: { enigme_status: 'active' } });
+  await assert.rejects(turn.buyFromShop(actor, 'champignon', undefined, opts([])), code('LOCKED'));
+
+  await setup({ player: { position: 52, pieces: 30, cases_restantes: 1, action_en_attente: { type: 'boo', case: 52, token: 't' } },
+    board: { enigme_status: 'active' } });
+  await assert.rejects(turn.booTargets(actor, 'pieces', opts([])), code('LOCKED'));
+  await assert.rejects(turn.booSteal(actor, 'p2', 'pieces', opts([])), code('LOCKED'));
+
+  await setup({ player: { position: 23, cases_restantes: 2, action_en_attente: null }, board: { enigme_status: 'active' } });
+  await assert.rejects(turn.continueTurn(actor, opts([])), code('LOCKED'));
+});
+
+test('PEND-08: passing Boo with remaining steps resumes walking after steal, pass, or expiration', async () => {
+  // Case 51 -> 52 (Boo) -> 53 -> 54
+  await setup({ player: { position: 51, pieces: 10 } });
+  const { move } = await turn.startTurn(actor, opts([die(3)]));
+  assert.equal(move.stop, 'boo');
+  assert.equal((await reload('p1')).cases_restantes, 2);
+  const pass = await turn.booPass(actor, opts([], 0));
+  assert.equal(pass.move.kind, 'landed');
+  assert.equal((await reload('p1')).position, 54);
+
+  await setup({ player: { position: 51, pieces: 10 } });
+  const second = await turn.startTurn(actor, opts([die(3)]));
+  const expired = await turn.expirePending(actor, second.move.pending.token, opts([], 0));
+  assert.equal(expired.type, 'boo');
+  assert.equal((await reload('p1')).position, 54);
+});
+
+test('unblockGhost restores play right only when the board is open and never during an ended season', async () => {
+  await setup({ player: { est_fantome: true, a_le_droit_de_jouer: false, a_joue_ce_tour: false }, board: { enigme_status: 'finished' } });
+  assert.equal(await turn.unblockGhost('p1', { now: WEDNESDAY }), true);
+  let p1 = await reload('p1');
+  assert.deepEqual([p1.est_fantome, p1.fantome_unblock_used, p1.a_le_droit_de_jouer], [false, true, true]);
+  assert.equal(await turn.unblockGhost('p1', { now: WEDNESDAY }), false, 'one-shot per season');
+
+  await setup({ player: { est_fantome: true, a_le_droit_de_jouer: false }, board: { enigme_status: 'active' } });
+  assert.equal(await turn.unblockGhost('p1', { now: WEDNESDAY }), true);
+  assert.equal((await reload('p1')).a_le_droit_de_jouer, false, 'board locked during active enigma');
+
+  await setup({ player: { est_fantome: true, a_le_droit_de_jouer: false }, board: { enigme_status: 'season_ended' } });
+  assert.equal(await turn.unblockGhost('p1', { now: WEDNESDAY }), false);
+});
+
+test('all active Mario items apply their effects and update inventory/board atomically', async () => {
+  const { ITEMS } = require('../src/gamemodes/mario_party/items');
+  await setup({
+    player: { position: 5, inventaire: [ITEMS.CHAMPIGNON.name, ITEMS.DOUBLE_DE.name, ITEMS.DE_TRIPLE.name] },
+    board: { position_etoile: 20 },
+  });
+  await turn.useItem(actor, 'CHAMPIGNON', 0, null, opts([]));
+  assert.equal((await reload('p1')).bonus_prochain_lancer, 3);
+  await turn.useItem(actor, 'DOUBLE_DE', 0, null, opts([]));
+  assert.equal((await reload('p1')).type_de, 'double');
+  await turn.useItem(actor, 'DE_TRIPLE', 0, null, opts([]));
+  assert.equal((await reload('p1')).type_de, 'triple');
+
+  await setup({
+    player: { position: 5, inventaire: [ITEMS.PIEGE_PIECES.name, ITEMS.PIEGE_ETOILE.name, ITEMS.SIFFLET.name] },
+    board: { position_etoile: 20 },
+  });
+  await turn.useItem(actor, 'PIEGE_PIECES', 0, null, opts([]));
+  await turn.useItem(actor, 'PIEGE_ETOILE', 0, null, opts([]));
+  const sifflet = await turn.useItem(actor, 'SIFFLET', 0, null, opts([0]));
+  assert.equal(sifflet.effect.kind, 'star_moved');
+  const plateau = await Plateau.findByPk(1);
+  assert.equal(plateau.pieges_actifs.length, 2);
+  assert.notEqual(plateau.position_etoile, 20);
+
+  await setup({
+    player: { position: 5, inventaire: [ITEMS.TUYAU.name, ITEMS.TUYAU_DORE.name] },
+    board: { position_etoile: 20 },
+  });
+  const pipe = await turn.useItem(actor, 'TUYAU', 0, null, opts([0]));
+  assert.equal(pipe.effect.kind, 'teleport');
+  assert.equal(pipe.effect.golden, false);
+  const gold = await turn.useItem(actor, 'TUYAU_DORE', 0, null, opts([]));
+  assert.equal(gold.effect.kind, 'teleport');
+  assert.equal(gold.effect.golden, true);
+  assert.equal((await reload('p1')).position, 19);
+});
+
 test.after(() => sequelize.close());
+

@@ -5,7 +5,7 @@ import { GameRuleError, Random, pick } from '../domain/types';
 import { withGameLock } from '../game/transaction';
 import { getActiveMode } from '../gamemodes/registry';
 import { gameNow } from '../utils/clock';
-import { parisTodayAt } from '../utils/time';
+import { parisClock, parisDateKey, parisTodayAt } from '../utils/time';
 
 export const MAX_TOURS = 30;
 export const BET_RUNNERS = ['Yoshi Vert', 'Yoshi Rouge', 'Yoshi Bleu', 'Yoshi Jaune', 'Yoshi Noir'];
@@ -15,6 +15,12 @@ const MAX_BET = 30;
 export function isSeasonActive(plateau: Pick<Plateau, 'tour' | 'enigme_status'> | null | undefined): boolean {
   if (!plateau || plateau.enigme_status === 'season_ended') return false;
   return plateau.tour > 0 && plateau.tour < MAX_TOURS;
+}
+/** Saturday board closes once bets open (10h Paris) or explicitly via mode_data.paris_ouverts; Friday's turn stays playable until 10h. */
+export function isSaturdayClosed(plateau: Pick<Plateau, 'mode_data'>, now: Date = gameNow()): boolean {
+  if (plateau.mode_data.paris_ouverts === true) return true;
+  const { weekday, hour } = parisClock(now);
+  return weekday === 6 && hour >= 10;
 }
 function hasBets(plateau: Plateau): boolean {
   return getActiveMode(plateau).hasShop && plateau.game_mode !== 'ile_defis';
@@ -66,7 +72,12 @@ export async function dailyTransition(now: Date = gameNow()): Promise<Transition
         resetDaily(j);
         await j.save({ transaction });
       }
-      Object.assign(plateau, { enigme_status: 'active', enigme_publiee: true, enigme_resolue: false, enigme_gagnants: [], fin_enigme_timestamp: parisTodayAt(21, now) });
+      const nextModeData = { ...plateau.mode_data };
+      delete nextModeData.propositions_jugees;
+      Object.assign(plateau, {
+        enigme_status: 'active', enigme_publiee: true, enigme_resolue: false, enigme_gagnants: [],
+        fin_enigme_timestamp: parisTodayAt(21, now), mode_data: nextModeData,
+      });
       plateau.tour += 1;
       await plateau.save({ transaction });
       return { kind: 'enigma', tour: plateau.tour, text: plateau.enigme_text ?? '', forgotten, ghosts };
@@ -87,11 +98,13 @@ export async function dailyTransition(now: Date = gameNow()): Promise<Transition
   });
 }
 
-/** Sunday 11h (or MJ): no enigma, the board opens with the black market. */
-export async function openBlackMarket(): Promise<{ opened: boolean; tour: number; seasonOver: boolean }> {
+/** Sunday 11h (or MJ): no enigma, the board opens with the black market. Idempotent per Paris calendar day. */
+export async function openBlackMarket(now: Date = gameNow()): Promise<{ opened: boolean; tour: number; seasonOver: boolean }> {
+  const today = parisDateKey(now);
   return run(async transaction => {
     const plateau = await Plateau.findByPk(1, { transaction });
     if (!plateau || !isSeasonActive(plateau) || !hasBets(plateau)) return { opened: false, tour: plateau?.tour ?? 0, seasonOver: false };
+    if (plateau.mode_data.marche_noir_date === today) return { opened: false, tour: plateau.tour, seasonOver: false };
     for (const j of await Joueur.findAll({ transaction })) {
       j.a_le_droit_de_jouer = !j.est_fantome;
       resetDaily(j);
@@ -99,16 +112,18 @@ export async function openBlackMarket(): Promise<{ opened: boolean; tour: number
     }
     plateau.tour += 1;
     plateau.enigme_resolue = true;
+    plateau.mode_data = { ...plateau.mode_data, marche_noir_date: today };
     await plateau.save({ transaction });
     return { opened: true, tour: plateau.tour, seasonOver: plateau.tour >= MAX_TOURS };
   });
 }
 
-/** Saturday 10h: the board closes and the Yoshi race bets open. State is persisted to survive restarts. */
+/** Saturday 10h: the board closes and the Yoshi race bets open. Persisted & idempotent so a re-run never wipes bets. */
 export async function openBets(): Promise<{ opened: boolean; ghosts: string[] }> {
   return run(async transaction => {
     const plateau = await Plateau.findByPk(1, { transaction });
     if (!plateau || !isSeasonActive(plateau) || !hasBets(plateau)) return { opened: false, ghosts: [] };
+    if (plateau.mode_data.paris_ouverts === true) return { opened: false, ghosts: [] };
     const players = await Joueur.findAll({ transaction });
     const ghosts = applyGhostRules(players);
     for (const j of players) {
@@ -176,6 +191,26 @@ export async function settleBets(random: Random = Math.random): Promise<BetResul
   });
 }
 
+/** Atomically claim an unpublished hint before sending it outside the game lock. */
+export async function claimHint(index: 1 | 2 | 3): Promise<string | null> {
+  return run(async transaction => {
+    const plateau = await Plateau.findByPk(1, { transaction });
+    if (!plateau || plateau.enigme_status !== 'active') return null;
+    const text = plateau[`enigme_indice${index}`];
+    if (!text || plateau[`indice${index}_publie`]) return null;
+    plateau[`indice${index}_publie`] = true;
+    await plateau.save({ transaction });
+    return text;
+  });
+}
+
+/** Release a claimed hint if Discord delivery failed so a subsequent retry/restart can publish it. */
+export async function unclaimHint(index: 1 | 2 | 3): Promise<void> {
+  await run(async transaction => {
+    await Plateau.update({ [`indice${index}_publie`]: false }, { where: { id: 1, enigme_status: 'active' }, transaction });
+  });
+}
+
 export async function markHintPublished(index: 1 | 2 | 3): Promise<void> {
   await run(async transaction => {
     await Plateau.update({ [`indice${index}_publie`]: true }, { where: { id: 1 }, transaction });
@@ -183,5 +218,8 @@ export async function markHintPublished(index: 1 | 2 | 3): Promise<void> {
 }
 
 export async function purgeOldSnapshots(now: Date = gameNow()): Promise<number> {
-  return TourSnapshot.destroy({ where: { timestamp: { [Op.lt]: new Date(now.getTime() - 7 * 86_400_000) } } });
+  return run(async transaction => TourSnapshot.destroy({
+    where: { timestamp: { [Op.lt]: new Date(now.getTime() - 7 * 86_400_000) } },
+    transaction,
+  }));
 }

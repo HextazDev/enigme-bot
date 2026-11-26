@@ -2,7 +2,7 @@
 
 ## Préparer une livraison
 
-La refonte nécessite une compilation avant le redémarrage. Adapter le récepteur de déploiement de Lordi avant de fusionner : un simple `npm install` suivi d’un redémarrage ne garantit pas que `dist/` est à jour.
+La refonte nécessite une compilation avant le redémarrage. Adapter le récepteur de déploiement de votre instance avant de fusionner : un simple `npm install` suivi d’un redémarrage ne garantit pas que `dist/` est à jour.
 
 ```bash
 npm ci --include=dev
@@ -11,7 +11,7 @@ npm run build
 pm2 startOrReload ecosystem.config.cjs --update-env
 ```
 
-PM2 doit exécuter `dist/src/index.js` et une seule instance. Le récepteur `deploy.hextaz.dev` doit donc lancer `npm ci --include=dev && npm run build` avant `pm2 reload` : sans compilation, le bot démarre l'ancien `dist/` ou ne démarre pas. Utiliser Node 24 (image Docker et CI) ; les outils exigent au minimum Node 22.13. Le chargement des commandes slash ne change que lors d’une modification de leurs définitions : `npm run deploy` (nécessaire après la refonte TypeScript : options de `/admin set_position` et `/admin tour`, description de `/plateau`). Cette commande contacte réellement Discord ; elle ne fait pas partie des tests.
+PM2 doit exécuter `dist/src/index.js` et une seule instance. Le déploiement automatisé doit donc lancer `npm ci --include=dev && npm run build` avant `pm2 reload` : sans compilation, le bot démarre l'ancien `dist/` ou ne démarre pas. Utiliser Node 24 (image Docker et CI) ; les outils exigent au minimum Node 22.13. Le chargement des commandes slash ne change que lors d’une modification de leurs définitions : `npm run deploy` (nécessaire après la refonte TypeScript : options de `/admin set_position` et `/admin tour`, description de `/plateau`). Cette commande contacte réellement Discord ; elle ne fait pas partie des tests.
 
 **`DEV_MODE` ne doit jamais être défini en production.** Sans lui, `npm run deploy` n'enregistre pas `/dev` et le bot ne la charge pas. Si `/dev` apparaît sur le serveur de production (déploiement fait par erreur avec `DEV_MODE=1`), retirer la variable puis relancer `npm run deploy`, qui remplace la liste complète des commandes.
 
@@ -55,6 +55,6 @@ La restauration perd les actions postérieures à la sauvegarde : annoncer ce po
 - La santé Kuma est une surveillance de Discord/SQLite, pas une preuve de succès du dernier cron.
 - Les choix en attente (`joueurs.action_en_attente`) sont persistants : au redémarrage, leurs expirations sont réarmées et `/jouer` réaffiche le choix. Seuls les rappels MP de `/deviner` sont en mémoire.
 - Les paris du samedi sont persistés (`plateau.mode_data.paris_ouverts`) : un redémarrage entre 10h et 21h ne les perd plus.
-- `WINNER_ROLE_ID` (optionnel) définit le rôle donné au vainqueur ; à défaut, l'identifiant historique est utilisé.
+- `WINNER_ROLE_ID` (optionnel) définit le rôle donné au vainqueur ; s'il est vide, aucun rôle n'est attribué automatiquement.
 
-Le test `backup.test.js` vérifie sauvegarde et relecture indépendante. Un exercice de restauration sur une copie représentative de Lordi reste nécessaire avant livraison ; aucune base de production n’a été utilisée dans les tests locaux.
+Le test `backup.test.js` vérifie sauvegarde et relecture indépendante. Un exercice de restauration sur une copie représentative de votre base de production reste nécessaire avant livraison ; aucune base de production n’a été utilisée dans les tests locaux.

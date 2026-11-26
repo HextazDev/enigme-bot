@@ -71,13 +71,37 @@ test('season end: bonus stars, final status and locked players are committed tog
   assert.equal(sent.length, 2, 'no second announcement');
 });
 
-test('the black market opens the board for non-ghost players only', async () => {
+test('the black market opens once per Paris day for non-ghost players only (idempotent)', async () => {
   await setup();
   await Joueur.bulkCreate([{ discord_id: 'awake' }, { discord_id: 'ghost', est_fantome: true }]);
-  const result = await season.openBlackMarket();
-  assert.deepEqual([result.opened, result.tour], [true, 6]);
+  const sunday = new Date('2026-10-11T09:00:00Z'); // Sunday 11h Paris
+  const first = await season.openBlackMarket(sunday);
+  assert.deepEqual([first.opened, first.tour], [true, 6]);
   assert.equal((await Joueur.findByPk('awake')).a_le_droit_de_jouer, true);
   assert.equal((await Joueur.findByPk('ghost')).a_le_droit_de_jouer, false);
+  const second = await season.openBlackMarket(new Date('2026-10-11T10:00:00Z'));
+  assert.deepEqual([second.opened, second.tour], [false, 6]);
+});
+
+test('BET-01: re-running openBets while already open never wipes existing bets', async () => {
+  await setup();
+  await Joueur.create({ discord_id: 'a', pieces: 20 });
+  assert.equal((await season.openBets()).opened, true);
+  await season.placeBet('a', 1, 10);
+  assert.equal((await season.openBets()).opened, false);
+  const a = await Joueur.findByPk('a');
+  assert.deepEqual([a.pari_coureurId, a.pari_montant], [1, 10]);
+});
+
+test('GAME-01: isSaturdayClosed allows Saturday before 10h Paris and closes at 10h or when paris_ouverts is true', () => {
+  const openBoard = { mode_data: {} };
+  const sat0830Paris = new Date('2026-10-10T06:30:00Z'); // 08:30 CEST
+  const sat1000Paris = new Date('2026-10-10T08:00:00Z'); // 10:00 CEST
+  const wedNoon = new Date('2026-10-07T10:00:00Z');
+  assert.equal(season.isSaturdayClosed(openBoard, sat0830Paris), false);
+  assert.equal(season.isSaturdayClosed(openBoard, sat1000Paris), true);
+  assert.equal(season.isSaturdayClosed({ mode_data: { paris_ouverts: true } }, wedNoon), true);
 });
 
 test.after(() => sequelize.close());
+

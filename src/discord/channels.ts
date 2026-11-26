@@ -21,7 +21,7 @@ export async function getChannel(client: ChannelHost | null | undefined, channel
   let channel: unknown = null;
   if (typeof channels.fetch === 'function') {
     try { channel = await channels.fetch(channelId); }
-    catch (error) { console.warn(`[WARN] Salon ${channelId} non récupérable, repli sur le cache :`, error instanceof Error ? error.message : error); }
+    catch (error) { console.warn(`[WARN] Salon ${channelId} non récupérable, repli sur le cache :`, error); }
   }
   if (!isSendable(channel) && channels.cache && typeof channels.cache.get === 'function') channel = channels.cache.get(channelId);
   return isSendable(channel) ? channel : null;

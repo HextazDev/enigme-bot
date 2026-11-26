@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isSeasonActive, handle17hTransition, handle15hReminder, handleSaturday8hReminder, handleSaturday10hBets, handleSunday11hBlackMarket, getChannel } = require('../src/game/cron');
+const { isSeasonActive, handle17hTransition, handle15hReminder, handleSaturday8hReminder, handleSaturday10hBets, handleSunday11hBlackMarket, publishHint, getChannel } = require('../src/game/cron');
+const { withGameLock, getLockedUser } = require('../src/game/transaction');
 const { Plateau, Joueur, sequelize } = require('../src/db/models');
 
 test('Lifecycle & Crons Suite', async (t) => {
@@ -39,7 +40,7 @@ test('Lifecycle & Crons Suite', async (t) => {
     const mockClient = {
       channels: {
         cache: {
-          get: (id) => ({
+          get: (_id) => ({
             send: async (msg) => { sentMessages.push(msg); }
           })
         }
@@ -118,18 +119,18 @@ test('Lifecycle & Crons Suite', async (t) => {
     assert.ok(sentMessages.length > 0, 'Should send enigma and lock messages');
   });
 
-  await t.test('handle15hReminder: does not send DMs if season is not active', async () => {
-    let dmSent = false;
+  await t.test('handle15hReminder & handleSaturday8hReminder: skip inactive seasons and ile_defis', async () => {
+    let dmSent = 0;
     const mockClient = {
       users: {
         fetch: async () => ({
-          send: async () => { dmSent = true; }
+          send: async () => { dmSent += 1; }
         })
       }
     };
 
     const plateau = await Plateau.findByPk(1);
-    await plateau.update({ tour: 0, enigme_status: 'season_ended' });
+    await plateau.update({ tour: 0, enigme_status: 'season_ended', game_mode: 'mario_party' });
 
     await Joueur.create({
       discord_id: '123456789',
@@ -138,7 +139,16 @@ test('Lifecycle & Crons Suite', async (t) => {
     });
 
     await handle15hReminder(mockClient);
-    assert.equal(dmSent, false, 'Should not send 15h reminder DMs when season is ended');
+    await handleSaturday8hReminder(mockClient);
+    assert.equal(dmSent, 0, 'Should not send reminder DMs when season is ended');
+
+    await plateau.update({ tour: 4, enigme_status: 'finished', game_mode: 'ile_defis' });
+    await handleSaturday8hReminder(mockClient);
+    assert.equal(dmSent, 0, 'Saturday 8h reminder must skip ile_defis');
+
+    await plateau.update({ tour: 4, enigme_status: 'finished', game_mode: 'mario_party' });
+    await handleSaturday8hReminder(mockClient);
+    assert.equal(dmSent, 1, 'Saturday 8h reminder sends DM in active mario_party');
   });
 
   await t.test('handleSaturday10hBets: does not open bets if season is ended or mode is ile_defis', async () => {
@@ -179,7 +189,6 @@ test('Lifecycle & Crons Suite', async (t) => {
 
     const plateau = await Plateau.findByPk(1);
     await plateau.update({ tour: 5, enigme_status: 'season_ended', game_mode: 'mario_party' });
-    const { handleSunday11hBlackMarket } = require('../src/game/cron');
     await handleSunday11hBlackMarket(mockClient);
     assert.equal(bmOpened, false, 'Should not open black market if season_ended');
 
@@ -201,7 +210,7 @@ test('Lifecycle & Crons Suite', async (t) => {
     };
 
     const plateau = await Plateau.findByPk(1);
-    await plateau.update({ tour: 5, enigme_status: 'finished', enigme_text: null });
+    await plateau.update({ tour: 5, enigme_status: 'finished', enigme_text: null, game_mode: 'mario_party' });
     let p = await Joueur.findByPk('player_active_1');
     if (!p) {
       await Joueur.create({ discord_id: 'player_active_1', a_le_droit_de_jouer: true });
@@ -215,6 +224,44 @@ test('Lifecycle & Crons Suite', async (t) => {
     assert.equal(messages.length, 1, 'Only one warning message is sent, no locking message');
     assert.ok(messages[0].includes('reste ouvert'), 'Message says board remains open');
     assert.ok(!messages[0].includes('verrouillé jusqu\'à 21h'), 'No lock mention');
+  });
+
+  await t.test('handle17hTransition: on final turn without enigma, closes season directly without claiming board stays open', async () => {
+    let messages = [];
+    const mockClient = {
+      channels: {
+        cache: { get: () => ({ send: async (msg) => { messages.push(msg); } }) }
+      },
+      guilds: { fetch: async () => null }
+    };
+    const plateau = await Plateau.findByPk(1);
+    await plateau.update({ tour: 29, enigme_status: 'finished', enigme_text: null, game_mode: 'mario_party' });
+    await handle17hTransition(mockClient);
+    assert.equal((await Plateau.findByPk(1)).enigme_status, 'season_ended');
+    assert.ok(!messages.some(m => String(m).includes('reste ouvert')), 'Must not announce board remains open when season ends');
+  });
+
+  await t.test('publishHint: sends outside the global game lock and unclaims on Discord failure for retry', async () => {
+    const plateau = await Plateau.findByPk(1);
+    await plateau.update({ tour: 5, enigme_status: 'active', enigme_indice1: 'Un indice', indice1_publie: false });
+
+    // Failure case: channel send throws -> hint is unclaimed so it can be retried
+    const failingClient = { channels: { fetch: async () => ({ send: async () => { throw new Error('discord down'); } }) } };
+    await withGameLock('cron-test', () => publishHint(failingClient, 1), true);
+    assert.equal((await Plateau.findByPk(1)).indice1_publie, false);
+
+    // Success case: channel send runs with no game lock held
+    let lockDuringSend = 'not-checked';
+    const sent = [];
+    const okClient = { channels: { fetch: async () => ({ send: async (msg) => { lockDuringSend = getLockedUser(); sent.push(msg); } }) } };
+    await withGameLock('cron-test', () => publishHint(okClient, 1), true);
+    assert.equal(lockDuringSend, null, 'Discord send must run after releasing the game lock');
+    assert.equal(sent.length, 1);
+    assert.equal((await Plateau.findByPk(1)).indice1_publie, true);
+
+    // Second call is a no-op
+    await withGameLock('cron-test', () => publishHint(okClient, 1), true);
+    assert.equal(sent.length, 1);
   });
 
   await t.test('endSeason: centralizes season_ended status and locks players', async () => {
@@ -251,7 +298,7 @@ test('Lifecycle & Crons Suite', async (t) => {
     assert.equal(refreshedPlayer.a_le_droit_de_jouer, false, 'Players must be locked on season end');
   });
 
-  await t.test('handle17hTransition: resets a_le_droit_de_jouer for non-ghost players and preserves false for ghost players (GAME-01)', async () => {
+  await t.test('handle17hTransition: resets a_le_droit_de_jouer for non-ghost players and preserves false for ghost players (CRON-01/CRON-02)', async () => {
     await Joueur.destroy({ where: {} });
     await Joueur.create({
       discord_id: 'active_player',
@@ -337,4 +384,6 @@ test('Lifecycle & Crons Suite', async (t) => {
     assert.equal(await getChannel({}, 'chan_id'), null);
   });
 });
+
+test.after(() => sequelize.close());
 

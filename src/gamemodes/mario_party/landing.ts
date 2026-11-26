@@ -85,6 +85,50 @@ export async function applyLanding(input: LandingInput, transaction: Transaction
         }
     }
 
+    const applyBowserRoulette = async () => {
+        const bowserEvents = [
+            { type: 'moitie_pieces', msg: 'Perte de la moitié des pièces' },
+            { type: 'moins_etoile', msg: 'Perte d\'une étoile' },
+            { type: 'revolution', msg: 'Révolution communiste des pièces du serveur' },
+            { type: 'destruction_inv', msg: 'Destruction de l\'inventaire' },
+            { type: 'don_dernier', msg: 'Don forcé au dernier' }
+        ] as const;
+        const bEvt = pick(random, bowserEvents);
+
+        if (bEvt.type === 'moitie_pieces') {
+            joueur.pieces = Math.floor(joueur.pieces / 2);
+            events.push({ kind: 'bowser_half', actorName: actor.username, playerCoins: joueur.pieces });
+        } else if (bEvt.type === 'moins_etoile') {
+            joueur.etoiles = Math.max(0, joueur.etoiles - 1);
+            events.push({ kind: 'bowser_star', actorName: actor.username, playerStars: joueur.etoiles });
+        } else if (bEvt.type === 'revolution') {
+            const tousLesJoueurs = await loadPlayers();
+            let totalPieces = 0;
+            tousLesJoueurs.forEach(j => totalPieces += j.pieces);
+            const part = Math.floor(totalPieces / tousLesJoueurs.length);
+            for (const j of tousLesJoueurs) {
+                j.pieces = part;
+                await j.save({ transaction });
+            }
+            events.push({ kind: 'bowser_redistribute', share: part });
+        } else if (bEvt.type === 'destruction_inv') {
+            joueur.inventaire = [];
+            events.push({ kind: 'bowser_inventory' });
+        } else if (bEvt.type === 'don_dernier') {
+            const tousLesJoueurs = (await loadPlayers()).sort((a, b) => a.etoiles - b.etoiles || a.pieces - b.pieces);
+            const dernier = tousLesJoueurs[0];
+            if (dernier && dernier.discord_id !== joueur.discord_id) {
+                const don = Math.floor(joueur.pieces / 2);
+                joueur.pieces -= don;
+                dernier.pieces += don;
+                await dernier.save({ transaction });
+                events.push({ kind: 'bowser_gift', actorName: actor.username, amount: don, targetId: dernier.discord_id, playerCoins: joueur.pieces, targetCoins: dernier.pieces });
+            } else {
+                events.push({ kind: 'bowser_last', actorName: actor.username });
+            }
+        }
+    };
+
     // Multiplicateur fin de partie (tours 26 à 30 = x2)
     const isLastTurns = plateau && plateau.tour >= 26;
     const gainPiece = isLastTurns ? 6 : 3;
@@ -176,49 +220,7 @@ export async function applyLanding(input: LandingInput, transaction: Transaction
             } else if (perte.type === 'tp_bowser') {
                 joueur.stat_cases_malchance = (joueur.stat_cases_malchance || 0) + 1;
                 events.push({ kind: 'unlucky_bowser', actorName: actor.username });
-
-                // --- Roulette Bowser ---
-                const bowserEvents = [
-                    { type: 'moitie_pieces', msg: 'Perte de la moitié des pièces' },
-                    { type: 'moins_etoile', msg: 'Perte d\'une étoile' },
-                    { type: 'revolution', msg: 'Révolution communiste des pièces du serveur' },
-                    { type: 'destruction_inv', msg: 'Destruction de l\'inventaire' },
-                    { type: 'don_dernier', msg: 'Don forcé au dernier' }
-                ] as const;
-                const bEvt = pick(random, bowserEvents);
-
-                if (bEvt.type === 'moitie_pieces') {
-                    joueur.pieces = Math.floor(joueur.pieces / 2);
-                    events.push({ kind: 'bowser_half', actorName: actor.username, playerCoins: joueur.pieces });
-                } else if (bEvt.type === 'moins_etoile') {
-                    joueur.etoiles = Math.max(0, joueur.etoiles - 1);
-                    events.push({ kind: 'bowser_star', actorName: actor.username, playerStars: joueur.etoiles });
-                } else if (bEvt.type === 'revolution') {
-                    const tousLesJoueurs = await loadPlayers();
-                    let totalPieces = 0;
-                    tousLesJoueurs.forEach(j => totalPieces += j.pieces);
-                    const part = Math.floor(totalPieces / tousLesJoueurs.length);
-                    for (const j of tousLesJoueurs) {
-                        j.pieces = part;
-                        await j.save({ transaction });
-                    }
-                    events.push({ kind: 'bowser_redistribute', share: part });
-                } else if (bEvt.type === 'destruction_inv') {
-                    joueur.inventaire = [];
-                    events.push({ kind: 'bowser_inventory' });
-                } else if (bEvt.type === 'don_dernier') {
-                    const tousLesJoueurs = await loadPlayers({ order: [['etoiles', 'ASC'], ['pieces', 'ASC']] });
-                    const dernier = tousLesJoueurs[0];
-                    if (dernier && dernier.discord_id !== joueur.discord_id) {
-                        const don = Math.floor(joueur.pieces / 2);
-                        joueur.pieces -= don;
-                        dernier.pieces += don;
-                        await dernier.save({ transaction });
-                        events.push({ kind: 'bowser_gift', actorName: actor.username, amount: don, targetId: dernier.discord_id, playerCoins: joueur.pieces, targetCoins: dernier.pieces });
-                    } else {
-                        events.push({ kind: 'bowser_last', actorName: actor.username });
-                    }
-                }
+                await applyBowserRoulette();
             }
         } else if (caseArrivee.type === 'Coup du Sort') {
             const fateEvents = [
@@ -342,47 +344,7 @@ export async function applyLanding(input: LandingInput, transaction: Transaction
             }
         } else if (caseArrivee.type === 'Bowser') {
             joueur.stat_cases_malchance = (joueur.stat_cases_malchance || 0) + 1;
-            const bowserEvents = [
-                { type: 'moitie_pieces', msg: 'Perte de la moitié des pièces' },
-                { type: 'moins_etoile', msg: 'Perte d\'une étoile' },
-                { type: 'revolution', msg: 'Révolution communiste des pièces du serveur' },
-                { type: 'destruction_inv', msg: 'Destruction de l\'inventaire' },
-                { type: 'don_dernier', msg: 'Don forcé au dernier' }
-            ] as const;
-            const bEvt = pick(random, bowserEvents);
-            
-            if (bEvt.type === 'moitie_pieces') {
-                joueur.pieces = Math.floor(joueur.pieces / 2);
-                events.push({ kind: 'bowser_half', actorName: actor.username, playerCoins: joueur.pieces });
-            } else if (bEvt.type === 'moins_etoile') {
-                joueur.etoiles = Math.max(0, joueur.etoiles - 1);
-                events.push({ kind: 'bowser_star', actorName: actor.username, playerStars: joueur.etoiles });
-            } else if (bEvt.type === 'revolution') {
-                const tousLesJoueurs = await loadPlayers();
-                let totalPieces = 0;
-                tousLesJoueurs.forEach(j => totalPieces += j.pieces);
-                const part = Math.floor(totalPieces / tousLesJoueurs.length);
-                for (const j of tousLesJoueurs) {
-                    j.pieces = part;
-                    await j.save({ transaction });
-                }
-                events.push({ kind: 'bowser_redistribute', share: part });
-            } else if (bEvt.type === 'destruction_inv') {
-                joueur.inventaire = [];
-                events.push({ kind: 'bowser_inventory' });
-            } else if (bEvt.type === 'don_dernier') {
-                const tousLesJoueurs = await loadPlayers({ order: [['etoiles', 'ASC'], ['pieces', 'ASC']] });
-                const dernier = tousLesJoueurs[0];
-                if (dernier && dernier.discord_id !== joueur.discord_id) {
-                    const don = Math.floor(joueur.pieces / 2);
-                    joueur.pieces -= don;
-                    dernier.pieces += don;
-                    await dernier.save({ transaction });
-                    events.push({ kind: 'bowser_gift', actorName: actor.username, amount: don, targetId: dernier.discord_id, playerCoins: joueur.pieces, targetCoins: dernier.pieces });
-                } else {
-                    events.push({ kind: 'bowser_last', actorName: actor.username });
-                }
-            }
+            await applyBowserRoulette();
         }
 
     await joueur.save({ transaction });

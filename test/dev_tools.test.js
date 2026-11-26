@@ -121,3 +121,18 @@ test('DEV-02: /dev horloge sets the virtual clock and /dev horloge_reset restore
   await dev.execute(slash('horloge_reset'));
   assert.equal(clock.devClockOffset(), 0);
 });
+
+test('DST: parisTodayAt and parisDayAt stay exact across Europe/Paris spring-forward and fall-back', () => {
+  const { parisTodayAt } = require('../src/utils/time');
+  // 2026-03-29: Europe/Paris springs forward (UTC+1 -> UTC+2 at 02:00 local)
+  const springEve = new Date('2026-03-28T11:00:00Z'); // Saturday 12:00 CET
+  assert.equal(parisDayAt(0, 11, 0, springEve).toISOString(), '2026-03-29T09:00:00.000Z', 'Sunday 11:00 CEST is 09:00Z');
+  assert.equal(new Date(parisTodayAt(21, new Date('2026-03-29T00:30:00Z'))).toISOString(), '2026-03-29T19:00:00.000Z', '21:00 CEST on spring-forward day');
+  // 2026-10-25: Europe/Paris falls back (UTC+2 -> UTC+1 at 03:00 local)
+  const fallEve = new Date('2026-10-24T10:00:00Z'); // Saturday 12:00 CEST
+  assert.equal(parisDayAt(0, 11, 0, fallEve).toISOString(), '2026-10-25T10:00:00.000Z', 'Sunday 11:00 CET is 10:00Z');
+  assert.equal(new Date(parisTodayAt(21, new Date('2026-10-25T00:30:00Z'))).toISOString(), '2026-10-25T20:00:00.000Z', '21:00 CET on fall-back day');
+});
+
+test.after(() => sequelize.close());
+

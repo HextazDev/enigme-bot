@@ -1,6 +1,6 @@
 import { marioVariant } from './variant';
 import { Client } from 'discord.js';
-import { Joueur } from '../../db/models';
+import { Joueur, Plateau } from '../../db/models';
 import { Random } from '../../domain/types';
 import { announce } from '../../discord/channels';
 import { SeasonEnd } from '../mode-interface';
@@ -58,6 +58,9 @@ export const endgame: SeasonEnd<Summary> = {
     for (const p of players) await p.save({ transaction });
     const podium = [...players].sort((a, b) => b.etoiles - a.etoiles || b.pieces - a.pieces).slice(0, 3)
       .map(p => ({ discord_id: p.discord_id, etoiles: p.etoiles, pieces: p.pieces }));
+    if (podium[0] && plateau.mode_data && typeof plateau.mode_data === 'object') {
+      plateau.mode_data = { ...plateau.mode_data, last_winner_id: podium[0].discord_id };
+    }
     return { bonus, podium };
   },
 
@@ -88,16 +91,27 @@ export const endgame: SeasonEnd<Summary> = {
 
 /** The role moves to the new winner. Failures are logged: the season is already closed. */
 async function giveWinnerRole(client: Client, winnerId: string): Promise<boolean> {
+  if (!config.guildId || !config.winnerRoleId) return false;
   try {
-    const guild = await client.guilds.fetch(config.guildId ?? '');
+    const guild = await client.guilds.fetch(config.guildId);
     const role = await guild.roles.fetch(config.winnerRoleId);
     if (!role) { console.warn(`[WARN] Rôle vainqueur ${config.winnerRoleId} introuvable.`); return false; }
-    for (const member of role.members.values()) await member.roles.remove(role);
+    const removed = new Set<string>();
+    for (const member of role.members.values()) {
+      if (member.id === winnerId) continue;
+      await member.roles.remove(role);
+      removed.add(member.id);
+    }
+    const previousWinner = await Plateau.findByPk(1).then(p => typeof p?.mode_data.last_winner_id === 'string' ? p.mode_data.last_winner_id : null).catch(() => null);
+    if (previousWinner && previousWinner !== winnerId && !removed.has(previousWinner)) {
+      const prevMember = await guild.members.fetch(previousWinner).catch(() => null);
+      if (prevMember?.roles.cache.has(role.id)) await prevMember.roles.remove(role);
+    }
     const member = await guild.members.fetch(winnerId);
     await member.roles.add(role);
     return true;
   } catch (error) {
-    console.warn('[WARN] Attribution du rôle vainqueur impossible :', error instanceof Error ? error.message : error);
+    console.warn('[WARN] Attribution du rôle vainqueur impossible :', error);
     return false;
   }
 }

@@ -64,7 +64,3 @@ export const BOARD_CASES: BoardCase[] = [
     requiresKey: cell.id === 46 || cell.id === 55,
 }));
 
-export function getCase(id: number) {
-    return BOARD_CASES.find(c => c.id === id);
-}
-

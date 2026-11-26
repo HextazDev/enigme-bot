@@ -2,6 +2,7 @@ import { Client } from 'discord.js';
 import { Joueur, Plateau, sequelize } from '../db/models';
 import { Random } from '../domain/types';
 import { getActiveMode } from '../gamemodes/registry';
+import { clearAllPendingTimers } from '../discord/pending-timers';
 import { invalidateBoardCache } from '../utils/canvas';
 import { afterGameAction, withGameLock } from './transaction';
 
@@ -22,6 +23,7 @@ export async function endSeason(client: Client, random: Random = Math.random): P
     return { success: true, alreadyEnded: false, playerCount: players.length, summary, mode: plateau.game_mode };
   }), true);
   if (!closing.alreadyEnded && closing.summary) {
+    clearAllPendingTimers();
     invalidateBoardCache();
     await afterGameAction(() => getActiveMode({ game_mode: closing.mode }).getEndgame().announce(client, closing.summary, closing.playerCount));
   }

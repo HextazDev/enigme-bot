@@ -12,12 +12,12 @@ RUN npm ci --include=dev --build-from-source
 COPY tsconfig.json deploy-commands.ts ./
 COPY scripts ./scripts
 COPY src ./src
-COPY assets ./assets
 RUN npm run build && npm prune --omit=dev
 
 FROM node:24-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libjpeg62-turbo libgif7 librsvg2-2 \
+    fonts-dejavu-core fontconfig \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/package*.json ./
@@ -26,4 +26,6 @@ COPY --from=build /app/dist ./dist
 RUN mkdir -p /app/data && chown node:node /app/data
 ENV NODE_ENV=production DATA_DIR=/app/data
 USER node
+HEALTHCHECK --interval=60s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "const fs=require('node:fs'); process.exit(fs.existsSync('/proc/1/cmdline') ? 0 : 1)"
 CMD ["node", "--enable-source-maps", "dist/src/index.js"]

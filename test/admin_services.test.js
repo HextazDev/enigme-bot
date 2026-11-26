@@ -73,4 +73,54 @@ test('items given by the MJ must exist in the active catalog and respect the inv
   assert.equal((await Joueur.findByPk('p')).inventaire.length, 2);
 });
 
+test('ADM-05: startSeason never spawns the star or hidden blocks in Night Sky key-locked bonus zones (46..58)', async () => {
+  await sequelize.sync({ force: true });
+  await Plateau.create({ id: 1, tour: 0, enigme_status: 'season_ended' });
+  for (const r of [0, 0.25, 0.5, 0.75, 0.999]) {
+    const { star } = await admin.startSeason('mario_party', 'standard', 'night_sky', () => r);
+    const plateau = await Plateau.findByPk(1);
+    const all = [star, ...Object.values(plateau.blocs_caches)];
+    assert.ok(all.every(id => id < 46), `bonus zone case spawned for r=${r}: ${all.join(', ')}`);
+  }
+});
+
+test('ADM-03: undoTurn restores stats, boutique_du_jour, mode_data and plateau_mode_data (including island gates) atomically', async () => {
+  const ile = require('../src/gamemodes/ile_defis/turn');
+  await sequelize.sync({ force: true });
+  await Plateau.create({
+    id: 1, tour: 4, enigme_status: 'finished',
+    game_mode: 'ile_defis', game_map: 'board_game_island',
+    mode_data: { portails_ouverts: [], cascade_desactivee: false, gagnants_dragon: [] },
+  });
+  await Joueur.create({
+    discord_id: 'p', position: 18, a_le_droit_de_jouer: true,
+    boutique_du_jour: ['champignon'], stat_cases_avancees: 7, stat_cases_chance: 2, stat_cases_malchance: 1, stat_objets_utilises: 3,
+    mode_data: { bonus_de: 'gold', double_lancer: false },
+  });
+  await Joueur.create({ discord_id: 'q', position: 12, mode_data: { bonus_de: 'silver', double_lancer: false } });
+
+  const d6 = n => (n - 1) / 6 + 0.01;
+  const seq = (vals, rest = 0) => () => (vals.length ? vals.shift() : rest);
+  await ile.startTurn({ id: 'p', username: 'p' }, { random: seq([d6(3), d6(1)]) });
+  await ile.resolveChallenge({ id: 'p', username: 'p' }, 'portail', null, { random: seq([d6(6)]) });
+  assert.deepEqual((await Plateau.findByPk(1)).mode_data.portails_ouverts, [20]);
+  assert.equal((await Joueur.findByPk('p')).mode_data.bonus_de, 'none');
+
+  // Verify rollback on failure keeps state untouched
+  Plateau.addHook('beforeUpdate', 'fail-undo', () => { throw new Error('Injected undo failure'); });
+  try { await assert.rejects(admin.undoTurn('p'), /Injected/); }
+  finally { Plateau.removeHook('beforeUpdate', 'fail-undo'); }
+  assert.deepEqual((await Plateau.findByPk(1)).mode_data.portails_ouverts, [20]);
+
+  await admin.undoTurn('p');
+  const p = await Joueur.findByPk('p');
+  const plateau = await Plateau.findByPk(1);
+  assert.deepEqual(plateau.mode_data.portails_ouverts, []);
+  assert.deepEqual(p.mode_data, { bonus_de: 'gold', double_lancer: false });
+  assert.deepEqual(p.boutique_du_jour, ['champignon']);
+  assert.deepEqual([p.stat_cases_avancees, p.stat_cases_chance, p.stat_cases_malchance, p.stat_objets_utilises], [7, 2, 1, 3]);
+  assert.deepEqual((await Joueur.findByPk('q')).mode_data, { bonus_de: 'silver', double_lancer: false });
+});
+
 test.after(() => sequelize.close());
+

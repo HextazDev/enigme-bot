@@ -25,6 +25,6 @@ export async function triggerEnigmaEnd(client: ChannelHost): Promise<void> {
   message += "\n🎲 **Le plateau est maintenant ouvert !** Vous pouvez utiliser `/jouer` jusqu'à 17h demain.";
   if (config.roleEnigmeId) message = `<@&${config.roleEnigmeId}>\n${message}`;
   await channel.send(message);
-  console.log('[ENIGME] Énigme terminée à 21h, plateau ouvert.');
+  console.log('[CRON] Énigme terminée à 21h, plateau ouvert.');
   });
 }

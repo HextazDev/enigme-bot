@@ -4,7 +4,6 @@ const { walk, rollDice, starCandidates, teleportCandidates, caseBefore } = requi
 const { BOARD_CASES } = require('../src/gamemodes/mario_party/maps/night_sky/board');
 
 const base = { cases: BOARD_CASES, star: 30, resume: null, direction: null, shopOpen: true };
-const seq = (...values) => () => values.shift();
 
 test('walking stops before moving at a crossroads (case 6 branches to 7 or 41)', () => {
   assert.deepEqual(walk({ ...base, position: 4, remaining: 5 }), { position: 6, remaining: 3, stop: 'intersection' });
