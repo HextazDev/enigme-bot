@@ -197,5 +197,41 @@ test('/jouer does not register new players after season_ended, and /settings + /
   assert.equal(fields[1].name, '#2 - Matelot');
 });
 
+test('CRON-16: modal_programmer_enigme announces the real next publication date on weekend and weekdays', async t => {
+  await sequelize.sync({ force: true });
+  await Plateau.create({ id: 1, tour: 2, enigme_status: 'finished' });
+  const makeModal = () => {
+    const calls = [];
+    const fields = { enigme_text: 'Mon titre\nTexte', reponse: 'soleil', indice_1: 'i1', indice_2: '', indice_3: '' };
+    return {
+      calls, customId: 'modal_programmer_enigme', client, deferred: true, replied: false,
+      user: { id: 'test-mj', username: 'MJ' },
+      fields: { getTextInputValue: id => fields[id] ?? '' },
+      isChatInputCommand: () => false, isModalSubmit: () => true, isButton: () => false, isStringSelectMenu: () => false,
+      editReply: async payload => { calls.push(['edit', payload]); },
+      followUp: async payload => { calls.push(['follow', payload]); },
+    };
+  };
+
+  // Saturday 10/10/2026 12:28 Paris -> lundi 12/10 à 17h
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-10T10:28:00Z') });
+  const satModal = makeModal();
+  await dispatch(satModal);
+  assert.match(contents(satModal.calls).join('\n'), /\*\*lundi 12\/10 à 17h\*\*/);
+
+  // Wednesday 07/10/2026 14:00 Paris -> aujourd'hui à 17h
+  t.mock.timers.setTime(new Date('2026-10-07T12:00:00Z').getTime());
+  const wedModal = makeModal();
+  await dispatch(wedModal);
+  assert.match(contents(wedModal.calls).join('\n'), /\*\*aujourd'hui à 17h\*\*/);
+
+  // Friday 09/10/2026 18:00 Paris -> lundi 12/10 à 17h
+  t.mock.timers.setTime(new Date('2026-10-09T16:00:00Z').getTime());
+  const friModal = makeModal();
+  await dispatch(friModal);
+  assert.match(contents(friModal.calls).join('\n'), /\*\*lundi 12\/10 à 17h\*\*/);
+});
+
 test.after(() => sequelize.close());
+
 

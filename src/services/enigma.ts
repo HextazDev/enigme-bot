@@ -1,7 +1,7 @@
 import { Joueur, Plateau, sequelize } from '../db/models';
 import { GameRuleError, JsonObject } from '../domain/types';
 import { withGameLock } from '../game/transaction';
-import { parisClock } from '../utils/time';
+import { formatEnigmaPublication, nextEnigmaPublication, parisClock } from '../utils/time';
 
 export const bonusDice = { '17h-18h': 'gold', '18h-19h': 'silver', '19h-20h': 'bronze', '20h-21h': 'chocolat' } as const;
 function bonusFor(tranche: string): string {
@@ -136,7 +136,10 @@ export async function recordGuess(userId: string, now: Date): Promise<Guess & { 
     if (joueur.est_fantome) throw new GameRuleError('GHOST', '👻 Tu es en mode fantôme ! Utilise la commande `/jouer` pour te débloquer avant de pouvoir deviner.');
     const plateau = await Plateau.findByPk(1, { transaction });
     if (!plateau || plateau.enigme_status === 'season_ended') throw new GameRuleError('CLOSED', '🏆 La saison est terminée ! Le vainqueur a été couronné et les énigmes sont closes.');
-    if (plateau.enigme_status === 'programmee') throw new GameRuleError('NOT_YET', "⏳ L'énigme n'est pas encore publiée ! Reviens à **17h** pour tenter ta chance.");
+    if (plateau.enigme_status === 'programmee') {
+      const next = formatEnigmaPublication(nextEnigmaPublication(now), now);
+      throw new GameRuleError('NOT_YET', `⏳ L'énigme n'est pas encore publiée ! Reviens **${next}** pour tenter ta chance.`);
+    }
     if (plateau.enigme_status !== 'active') throw new GameRuleError('FINISHED', "L'énigme du jour est déjà terminée !");
     if (joueur.a_trouve_enigme) throw new GameRuleError('FOUND', "🎉 Tu as déjà trouvé la bonne réponse aujourd'hui ! Tu ne peux plus deviner.");
     const remainingMinutes = guessCooldownRemaining(joueur.last_deviner_time, now);
