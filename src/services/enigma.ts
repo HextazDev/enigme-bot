@@ -1,7 +1,8 @@
 import { Joueur, Plateau, sequelize } from '../db/models';
 import { GameRuleError, JsonObject } from '../domain/types';
 import { withGameLock } from '../game/transaction';
-import { parisClock } from '../utils/time';
+import { gameNow } from '../utils/clock';
+import { formatEnigmaPublication, nextEnigmaPublication, parisClock } from '../utils/time';
 
 export const bonusDice = { '17h-18h': 'gold', '18h-19h': 'silver', '19h-20h': 'bronze', '20h-21h': 'chocolat' } as const;
 function bonusFor(tranche: string): string {
@@ -44,9 +45,15 @@ export async function finishEnigma() {
 }
 
 export interface EnigmaInput { text: string; answer: string; hints: [string | null, string | null, string | null] }
+export interface ProgrammedEnigma { nextPublication: Date; nextPublicationLabel: string }
 
-/** Program tomorrow's (or today's, before 17h) enigma. A running enigma or an ended season cannot be overwritten. */
-export async function programEnigma(input: EnigmaInput): Promise<void> {
+function nextPublicationInfo(now: Date): ProgrammedEnigma {
+  const nextPublication = nextEnigmaPublication(now);
+  return { nextPublication, nextPublicationLabel: formatEnigmaPublication(nextPublication, now) };
+}
+
+/** Program the next enigma (today before 17h on weekdays, otherwise the next scheduled weekday). A running enigma or an ended season cannot be overwritten. */
+export async function programEnigma(input: EnigmaInput, now: Date = gameNow()): Promise<ProgrammedEnigma> {
   if (!input.text.trim() || !input.answer.trim()) throw new GameRuleError('EMPTY', "L'énigme et sa réponse sont obligatoires.");
   return withGameLock('mj', () => sequelize.transaction(async transaction => {
     const plateau = await Plateau.findByPk(1, { transaction });
@@ -62,6 +69,7 @@ export async function programEnigma(input: EnigmaInput): Promise<void> {
     });
     await plateau.save({ transaction });
     await Joueur.update({ a_trouve_enigme: false }, { where: {}, transaction });
+    return nextPublicationInfo(now);
   }));
 }
 
@@ -136,7 +144,10 @@ export async function recordGuess(userId: string, now: Date): Promise<Guess & { 
     if (joueur.est_fantome) throw new GameRuleError('GHOST', '👻 Tu es en mode fantôme ! Utilise la commande `/jouer` pour te débloquer avant de pouvoir deviner.');
     const plateau = await Plateau.findByPk(1, { transaction });
     if (!plateau || plateau.enigme_status === 'season_ended') throw new GameRuleError('CLOSED', '🏆 La saison est terminée ! Le vainqueur a été couronné et les énigmes sont closes.');
-    if (plateau.enigme_status === 'programmee') throw new GameRuleError('NOT_YET', "⏳ L'énigme n'est pas encore publiée ! Reviens à **17h** pour tenter ta chance.");
+    if (plateau.enigme_status === 'programmee') {
+      const { nextPublicationLabel } = nextPublicationInfo(now);
+      throw new GameRuleError('NOT_YET', `⏳ L'énigme n'est pas encore publiée ! Reviens **${nextPublicationLabel}** pour tenter ta chance.`);
+    }
     if (plateau.enigme_status !== 'active') throw new GameRuleError('FINISHED', "L'énigme du jour est déjà terminée !");
     if (joueur.a_trouve_enigme) throw new GameRuleError('FOUND', "🎉 Tu as déjà trouvé la bonne réponse aujourd'hui ! Tu ne peux plus deviner.");
     const remainingMinutes = guessCooldownRemaining(joueur.last_deviner_time, now);

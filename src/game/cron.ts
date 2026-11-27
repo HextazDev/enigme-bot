@@ -11,6 +11,7 @@ import { getActiveMode } from '../gamemodes/registry';
 import { endSeason } from './endgame';
 import { triggerEnigmaEnd } from './enigma';
 import { afterGameAction, withScheduledLock } from './transaction';
+import { DEFAULT_ENIGMA_SCHEDULE, publicationCronExpression } from '../utils/time';
 import config = require('../config');
 
 export { getChannel };
@@ -212,7 +213,7 @@ export function initCronJobs(client: CronClient): void {
   stopCronJobs();
   schedule('0 15 * * 1-5', () => handle15hReminder(client));
   schedule('0 8 * * 6', () => handleSaturday8hReminder(client));
-  schedule('0 17 * * 1-5', () => handle17hTransition(client));
+  schedule(publicationCronExpression(DEFAULT_ENIGMA_SCHEDULE), () => handle17hTransition(client));
   schedule('0 18 * * 1-5', () => publishHint(client, 1));
   schedule('0 19 * * 1-5', () => publishHint(client, 2));
   schedule('0 20 * * 1-5', () => publishHint(client, 3));
