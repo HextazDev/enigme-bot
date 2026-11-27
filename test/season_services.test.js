@@ -61,13 +61,13 @@ test('season end: bonus stars, final status and locked players are committed tog
   const sent = [];
   const client = { channels: { fetch: async () => ({ send: async msg => sent.push(msg) }) }, guilds: { fetch: async () => { throw new Error('no guild'); } } };
   // random 0 picks the "Chance" star then the "Malchance" star (nobody: all zero).
-  const result = await endSeason(client, () => 0, async () => {});
+  const result = await endSeason(client, () => 0, { wait: async () => {} });
   assert.deepEqual([result.alreadyEnded, result.playerCount], [false, 2]);
   const lucky = await Joueur.findByPk('lucky');
   assert.deepEqual([lucky.etoiles, lucky.a_le_droit_de_jouer, lucky.action_en_attente], [1, false, null]);
   assert.equal((await Plateau.findByPk(1)).enigme_status, 'season_ended');
   assert.equal(sent.length, 4, 'intro, 2 bonus stars and podium');
-  assert.equal((await endSeason(client, Math.random, async () => {})).alreadyEnded, true);
+  assert.equal((await endSeason(client)).alreadyEnded, true);
   assert.equal(sent.length, 4, 'no second announcement');
 });
 

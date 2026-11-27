@@ -16,12 +16,17 @@ export interface ModeInteractions {
   rearmTimers(client: Client): Promise<void>;
 }
 
+export interface AnnounceOptions {
+  /** Pause between sequential reveal messages (injectable for tests and shutdown flushing). */
+  wait?: (ms: number) => Promise<void>;
+}
+
 export interface SeasonEnd<Summary extends object = object> {
   /** Mode-specific awards, inside the season-closing transaction. */
   close(players: Joueur[], plateau: Plateau, transaction: Transaction, random: Random): Promise<Summary>;
   parseSummary(value: unknown): Summary;
   /** Public announcement once the transaction is committed. */
-  announce(client: Client, summary: unknown, playerCount: number, wait?: (ms: number) => Promise<void>): Promise<void>;
+  announce(client: Client, summary: unknown, playerCount: number, options?: AnnounceOptions): Promise<void>;
 }
 
 export interface ModeDefinition {

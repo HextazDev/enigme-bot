@@ -1,10 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { isSeasonActive, handle17hTransition, handle15hReminder, handleSaturday8hReminder, handleSaturday10hBets, handleSunday11hBlackMarket, publishHint, getChannel } = require('../src/game/cron');
+const { setEndgameWait } = require('../src/game/endgame');
 const { withGameLock, getLockedUser } = require('../src/game/transaction');
 const { Plateau, Joueur, sequelize } = require('../src/db/models');
 
 test('Lifecycle & Crons Suite', async (t) => {
+  setEndgameWait(async () => {});
+  t.after(() => setEndgameWait(null));
   // Sync in-memory or test DB
   await sequelize.sync({ force: true });
   await Plateau.create({ id: 1, tour: 0, enigme_status: 'finished' });
@@ -289,7 +292,7 @@ test('Lifecycle & Crons Suite', async (t) => {
       await player.update({ a_le_droit_de_jouer: true });
     }
 
-    await endSeason(mockClient, Math.random, async () => {});
+    await endSeason(mockClient);
 
     const refreshed = await Plateau.findByPk(1);
     assert.equal(refreshed.enigme_status, 'season_ended');

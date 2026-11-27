@@ -7,6 +7,7 @@ import { handleInteraction } from './discord/interaction';
 import { Command, CommandRegistry, commandEnabled, createDispatcher } from './discord/router';
 import { clearAllPendingTimers } from './discord/pending-timers';
 import { initCronJobs, publishHint, stopCronJobs } from './game/cron';
+import { flushEndgameDelays } from './game/endgame';
 import { triggerEnigmaEnd } from './game/enigma';
 import { drainGameQueue, withScheduledLock } from './game/transaction';
 import { getActiveInteractions } from './gamemodes/registry';
@@ -112,6 +113,7 @@ function shutdown(signal: string): void {
   stopKumaHeartbeat();
   stopCronJobs();
   clearAllPendingTimers();
+  flushEndgameDelays();
   if (restartEnigmaTimer) { clearTimeout(restartEnigmaTimer); restartEnigmaTimer = null; }
   drainGameQueue()
     .then(() => client.destroy())

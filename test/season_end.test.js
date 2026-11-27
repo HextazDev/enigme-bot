@@ -1,12 +1,30 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Plateau, Joueur, sequelize } = require('../src/db/models');
-const { endSeason } = require('../src/game/endgame');
+const { endSeason, flushEndgameDelays, resetEndgameDelays } = require('../src/game/endgame');
 const { handle17hTransition } = require('../src/game/cron');
-const { getLockedUser } = require('../src/game/transaction');
-const { BONUS_STARS, BONUS_REVEAL_DELAY_MS, bonusWinners } = require('../src/gamemodes/mario_party/endgame');
+const { afterGameAction, getLockedUser, withGameLock } = require('../src/game/transaction');
+const { BONUS_STARS, BONUS_REVEAL_DELAY_MS, bonusWinners, endgame: marioEndgame } = require('../src/gamemodes/mario_party/endgame');
+const config = require('../src/config');
 
 const noDelay = async () => {};
+
+function mockGuildWithRole(awardedTo) {
+  const role = { id: 'role_winner', members: new Map() };
+  return {
+    roles: { fetch: async () => role },
+    members: {
+      fetch: async id => ({
+        id,
+        roles: {
+          cache: { has: () => false },
+          add: async r => { awardedTo.push({ id, roleId: r.id }); },
+          remove: async () => {},
+        },
+      }),
+    },
+  };
+}
 
 test('Season End & Empty Board Suite (TDD)', async (t) => {
   await sequelize.sync({ force: true });
@@ -25,7 +43,7 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
       }
     };
 
-    const res = await endSeason(mockClient, Math.random, noDelay);
+    const res = await endSeason(mockClient, Math.random, { wait: noDelay });
     assert.ok(res, 'endSeason must return an object');
     assert.equal(res.alreadyEnded, true, 'alreadyEnded should be true');
     assert.equal(res.success, true);
@@ -49,7 +67,7 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
       }
     };
 
-    const res = await endSeason(mockClient, Math.random, noDelay);
+    const res = await endSeason(mockClient, Math.random, { wait: noDelay });
     assert.ok(res, 'endSeason must return an object');
     assert.equal(res.alreadyEnded, false);
     assert.equal(res.playerCount, 0);
@@ -82,7 +100,7 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
     assert.equal(sentMessages.length, 0, 'No ping should be sent when 0 players and no enigma');
   });
 
-  await t.test('SEC-01 / END-01: ghosts are excluded from bonus stars and final podium', async () => {
+  await t.test('SEC-01 / END-01: ghosts are excluded from bonus stars, final podium and winner role', async () => {
     await Joueur.destroy({ where: {} });
     const plateau = await Plateau.findByPk(1);
     await plateau.update({ tour: 30, enigme_status: 'finished', game_mode: 'mario_party', mode_data: {} });
@@ -108,25 +126,36 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
       },
     ]);
 
-    const sent = [];
-    const mockClient = {
-      channels: { fetch: async () => ({ send: async msg => sent.push(String(msg)) }) },
-      guilds: { fetch: async () => null },
-    };
+    const prevGuild = config.guildId;
+    const prevRole = config.winnerRoleId;
+    config.guildId = 'guild_test';
+    config.winnerRoleId = 'role_winner';
+    try {
+      const sent = [];
+      const awardedTo = [];
+      const mockClient = {
+        channels: { fetch: async () => ({ send: async msg => sent.push(String(msg)) }) },
+        guilds: { fetch: async () => mockGuildWithRole(awardedTo) },
+      };
 
-    // random () => 0 picks Chance then Malchance
-    await endSeason(mockClient, () => 0, noDelay);
+      // random () => 0 picks Chance then Malchance
+      await endSeason(mockClient, () => 0, { wait: noDelay });
 
-    const ghost = await Joueur.findByPk('ghost_leader');
-    const active = await Joueur.findByPk('active_player');
-    const updatedBoard = await Plateau.findByPk(1);
+      const ghost = await Joueur.findByPk('ghost_leader');
+      const active = await Joueur.findByPk('active_player');
+      const updatedBoard = await Plateau.findByPk(1);
 
-    assert.equal(ghost.etoiles, 10, 'Ghost must never receive any bonus star');
-    assert.equal(active.etoiles, 3, 'Active player must win Chance bonus star instead of ghost');
-    assert.equal(updatedBoard.mode_data.last_winner_id, 'active_player', 'Ghost must not become season winner');
-    const podiumMsg = sent.at(-1);
-    assert.ok(podiumMsg.includes('<@active_player>'), 'Active player must appear on podium');
-    assert.ok(!podiumMsg.includes('<@ghost_leader>'), 'Ghost must be excluded from final podium');
+      assert.equal(ghost.etoiles, 10, 'Ghost must never receive any bonus star');
+      assert.equal(active.etoiles, 3, 'Active player must win Chance bonus star instead of ghost');
+      assert.equal(updatedBoard.mode_data.last_winner_id, 'active_player', 'Ghost must not become season winner');
+      assert.deepEqual(awardedTo, [{ id: 'active_player', roleId: 'role_winner' }], 'Winner role must go to active winner, never ghost');
+      const podiumMsg = sent.at(-1);
+      assert.ok(podiumMsg.includes('<@active_player>'), 'Active player must appear on podium');
+      assert.ok(!podiumMsg.includes('<@ghost_leader>'), 'Ghost must be excluded from final podium');
+    } finally {
+      config.guildId = prevGuild;
+      config.winnerRoleId = prevRole;
+    }
   });
 
   await t.test('END-01: Paresseux bonus star excludes ghosts and inert players with 0 steps', async () => {
@@ -158,7 +187,7 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
     assert.deepEqual(bonusWinners(allZero, paresseux), [], 'Tied inert players at 0 must not win Paresseux');
   });
 
-  await t.test('END-01: active tied players with score > 0 all share the bonus star, ghosts excluded', () => {
+  await t.test('END-01: active tied players with score > 0 share the bonus star and mentions render properly for 2 and 3+ winners', async () => {
     const chance = BONUS_STARS.find(s => s.stat === 'stat_cases_chance');
     const paresseux = BONUS_STARS.find(s => s.lowest);
 
@@ -179,9 +208,36 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
       ['a', 'b'],
       'All active tied players with > 0 steps share Paresseux while ghost is excluded'
     );
+
+    const sent = [];
+    const mockClient = {
+      channels: { fetch: async () => ({ send: async msg => sent.push(String(msg)) }) },
+      guilds: { fetch: async () => null },
+    };
+    await marioEndgame.announce(mockClient, {
+      bonus: [
+        { name: 'Star A', desc: 'desc A', winners: ['a', 'b'] },
+        { name: 'Star B', desc: 'desc B', winners: ['a', 'b', 'c'] },
+      ],
+      podium: [{ discord_id: 'a', etoiles: 2, pieces: 10 }],
+    }, 3, { wait: noDelay });
+    assert.ok(sent[1].includes('<@a> et <@b>'), 'Two tied winners must be formatted as "<@a> et <@b>"');
+    assert.ok(sent[2].includes('<@a>, <@b> et <@c>'), 'Three+ tied winners must be formatted with comma and "et"');
+
+    // Singular intro wording when a variant awards 1 bonus star
+    const singularSent = [];
+    const singularClient = {
+      channels: { fetch: async () => ({ send: async msg => singularSent.push(String(msg)) }) },
+      guilds: { fetch: async () => null },
+    };
+    await marioEndgame.announce(singularClient, {
+      bonus: [{ name: 'Star A', desc: 'desc A', winners: ['a'] }],
+      podium: [{ discord_id: 'a', etoiles: 1, pieces: 10 }],
+    }, 1, { wait: noDelay });
+    assert.ok(singularSent[0].includes('1 étoile aléatoire va être distribuée'), 'Single bonus star must use singular French wording');
   });
 
-  await t.test('END-01: all-ghost season closes cleanly with 0 bonus stars and no podium winner', async () => {
+  await t.test('END-01: all-ghost season closes cleanly in a single message with 0 bonus stars, 0 pauses and no winner role', async () => {
     await Joueur.destroy({ where: {} });
     const plateau = await Plateau.findByPk(1);
     await plateau.update({ tour: 30, enigme_status: 'finished', game_mode: 'mario_party', mode_data: {} });
@@ -192,19 +248,22 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
     ]);
 
     let roleFetched = false;
+    let waitCalls = 0;
     const sent = [];
     const mockClient = {
       channels: { fetch: async () => ({ send: async msg => sent.push(String(msg)) }) },
       guilds: { fetch: async () => { roleFetched = true; return null; } },
     };
 
-    await endSeason(mockClient, () => 0, noDelay);
+    await endSeason(mockClient, () => 0, { wait: async () => { waitCalls += 1; } });
 
     assert.equal((await Joueur.findByPk('ghost_1')).etoiles, 4);
     assert.equal((await Joueur.findByPk('ghost_2')).etoiles, 1);
     assert.equal(roleFetched, false, 'Winner role must not be awarded when no active player remains');
     assert.equal((await Plateau.findByPk(1)).mode_data.last_winner_id, undefined);
-    assert.ok(sent.at(-1).includes('Aucun joueur actif'), 'Final message should note no active player finished');
+    assert.equal(waitCalls, 0, 'All-ghost season must not waste suspense pauses on empty bonus ceremony');
+    assert.equal(sent.length, 1, 'All-ghost season must send a single closing message');
+    assert.ok(sent[0].includes('Aucun joueur actif'), 'Final message should note no active player finished');
   });
 
   await t.test('END-01: bonus stars are revealed sequentially with 2500ms suspense pauses outside the game lock', async () => {
@@ -235,7 +294,7 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
     };
 
     assert.equal(BONUS_REVEAL_DELAY_MS, 2500);
-    await endSeason(mockClient, () => 0, waitSpy);
+    await endSeason(mockClient, () => 0, { wait: waitSpy });
 
     assert.deepEqual(
       events.map(e => e.kind === 'wait' ? `wait:${e.ms}` : 'send'),
@@ -246,6 +305,140 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
     assert.ok(events[2].text.includes('Étoile de la Chance') && events[2].text.includes('<@p1>'));
     assert.ok(events[4].text.includes('Étoile de la Malchance') && events[4].text.includes('<@p2>'));
     assert.ok(events[6].text.includes('podium'));
+  });
+
+  await t.test('END-01: a Discord error on intro or bonus star does not prevent winner role or final podium', async () => {
+    await Joueur.destroy({ where: {} });
+    const plateau = await Plateau.findByPk(1);
+    await plateau.update({ tour: 30, enigme_status: 'finished', game_mode: 'mario_party', mode_data: {} });
+    await Joueur.create({ discord_id: 'champ', est_fantome: false, etoiles: 3, pieces: 10, stat_cases_chance: 4, stat_cases_malchance: 2 });
+
+    const prevGuild = config.guildId;
+    const prevRole = config.winnerRoleId;
+    config.guildId = 'guild_test';
+    config.winnerRoleId = 'role_winner';
+    try {
+      let attempt = 0;
+      const delivered = [];
+      const awardedTo = [];
+      const mockClient = {
+        channels: {
+          fetch: async () => ({
+            send: async msg => {
+              attempt += 1;
+              if (attempt <= 2) throw new Error(`transient discord 502 #${attempt}`);
+              delivered.push(String(msg));
+            },
+          }),
+        },
+        guilds: { fetch: async () => mockGuildWithRole(awardedTo) },
+      };
+
+      await endSeason(mockClient, () => 0, { wait: noDelay });
+
+      assert.equal(delivered.length, 2, 'Star 2 and final podium must still be sent after intro & Star 1 fail');
+      assert.ok(delivered[0].includes('Étoile de la Malchance'));
+      assert.ok(delivered[1].includes('podium') && delivered[1].includes('<@champ>'));
+      assert.deepEqual(awardedTo, [{ id: 'champ', roleId: 'role_winner' }], 'Winner role must still be granted');
+    } finally {
+      config.guildId = prevGuild;
+      config.winnerRoleId = prevRole;
+    }
+  });
+
+  await t.test('END-01: under a parent lock (/admin stop), suspense reveal does not block editReply or concurrent ordered publications, and flushes on shutdown', async () => {
+    await Joueur.destroy({ where: {} });
+    const plateau = await Plateau.findByPk(1);
+    await plateau.update({ tour: 30, enigme_status: 'finished', game_mode: 'mario_party', mode_data: {} });
+    await Joueur.create({ discord_id: 'winner', est_fantome: false, etoiles: 2, stat_cases_chance: 3 });
+
+    const order = [];
+    let releaseReveal;
+    const firstPauseReached = new Promise(resolve => {
+      releaseReveal = resolve;
+    });
+    let resumePause;
+    const gatedWait = async () => {
+      releaseReveal();
+      await new Promise(resolve => { resumePause = resolve; });
+    };
+
+    const mockClient = {
+      channels: { fetch: async () => ({ send: async msg => order.push(`announce:${String(msg).slice(0, 12)}`) }) },
+      guilds: { fetch: async () => null },
+    };
+
+    const adminOp = withGameLock('mj', async () => {
+      await endSeason(mockClient, () => 0, { wait: gatedWait });
+      await afterGameAction(async () => { order.push('admin:editReply'); });
+    });
+
+    await firstPauseReached;
+    // The global lock must already be released AND /admin stop editReply + concurrent ordered actions must complete while reveal is paused.
+    assert.equal(getLockedUser(), null, 'Global game lock must be released before reveal pauses');
+    await withGameLock('other_player', async () => {
+      await afterGameAction(async () => { order.push('other:editReply'); });
+    });
+    assert.ok(order.includes('admin:editReply'), '/admin stop reply must not be stalled by the suspense reveal');
+    assert.ok(order.includes('other:editReply'), 'Concurrent ordered replies must not be blocked behind the reveal');
+
+    // Release remaining pauses so adminOp settles cleanly.
+    while (resumePause) {
+      const next = resumePause;
+      resumePause = null;
+      next();
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await adminOp;
+
+    // Also verify real managedWait is flushed immediately by flushEndgameDelays() (shutdown path).
+    await Plateau.update({ tour: 30, enigme_status: 'finished', game_mode: 'mario_party', mode_data: {} }, { where: { id: 1 } });
+    const shutdownSent = [];
+    const shutdownClient = {
+      channels: {
+        fetch: async () => ({
+          send: async msg => {
+            shutdownSent.push(String(msg));
+            if (shutdownSent.length === 1) setImmediate(() => flushEndgameDelays());
+          },
+        }),
+      },
+      guilds: { fetch: async () => null },
+    };
+    const started = Date.now();
+    try {
+      await endSeason(shutdownClient, () => 0);
+    } finally {
+      resetEndgameDelays();
+    }
+    assert.equal(shutdownSent.length, 4, 'Flushing delays on shutdown must complete all reveal messages including podium');
+    assert.ok(Date.now() - started < 1000, 'Flushed shutdown reveal must finish well under drainGameQueue timeout');
+  });
+
+  await t.test('SEC-01: ile_defis endgame also excludes ghost players from final leaders', async () => {
+    await Joueur.destroy({ where: {} });
+    const plateau = await Plateau.findByPk(1);
+    await plateau.update({
+      tour: 30,
+      enigme_status: 'finished',
+      game_mode: 'ile_defis',
+      game_map: 'board_game_island',
+      mode_data: { portails_ouverts: [], cascade_desactivee: false, gagnants_dragon: [] },
+    });
+    await Joueur.bulkCreate([
+      { discord_id: 'ghost_front', est_fantome: true, position: 70 },
+      { discord_id: 'active_runner', est_fantome: false, position: 42 },
+    ]);
+
+    const sent = [];
+    const mockClient = {
+      channels: { fetch: async () => ({ send: async msg => sent.push(String(msg)) }) },
+    };
+
+    await endSeason(mockClient);
+    assert.equal(sent.length, 1);
+    assert.ok(sent[0].includes('<@active_runner>'));
+    assert.ok(!sent[0].includes('<@ghost_front>'), 'Ghost must be excluded from ile_defis race ranking');
   });
 });
 

@@ -3,12 +3,23 @@ import { Client } from 'discord.js';
 import { Joueur, Plateau } from '../../db/models';
 import { Random } from '../../domain/types';
 import { announce } from '../../discord/channels';
-import { SeasonEnd } from '../mode-interface';
+import { AnnounceOptions, SeasonEnd } from '../mode-interface';
 import config = require('../../config');
 import { record, strings, integer } from '../../domain/persisted';
 
 export const BONUS_REVEAL_DELAY_MS = 2500;
-const defaultWait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+const defaultWait = (ms: number): Promise<void> => new Promise(resolve => {
+  const timer = setTimeout(resolve, ms);
+  timer.unref();
+});
+
+async function sendRevealStep(client: Client, content: string, label: string): Promise<void> {
+  try {
+    await announce(client, content);
+  } catch (error) {
+    console.warn(`[WARN] Annonce de fin de saison impossible (${label}) :`, error);
+  }
+}
 
 type Stat = 'stat_cases_chance' | 'stat_cases_malchance' | 'stat_cases_avancees' | 'stat_enigmes_trouvees' | 'stat_objets_utilises';
 export interface BonusStar { name: string; desc: string; stat: Stat; lowest?: boolean }
@@ -61,15 +72,20 @@ export const endgame: SeasonEnd<Summary> = {
   },
   async close(players, plateau, transaction, random: Random): Promise<Summary> {
     const activePlayers = players.filter(p => !p.est_fantome);
+    if (!activePlayers.length) return { bonus: [], podium: [] };
     // Historical draw, kept as is: a comparator shuffle (not uniform) then the first categories.
     const picked = [...BONUS_STARS].sort(() => 0.5 - random()).slice(0, marioVariant(plateau.game_variant).settings.bonusStarsCount);
     const bonus: Summary['bonus'] = [];
+    const updated = new Set<Joueur>();
     for (const star of picked) {
       const winners = bonusWinners(activePlayers, star);
-      for (const w of winners) w.etoiles += 1;
+      for (const w of winners) {
+        w.etoiles += 1;
+        updated.add(w);
+      }
       bonus.push({ name: star.name, desc: star.desc, winners: winners.map(w => w.discord_id) });
     }
-    for (const p of activePlayers) await p.save({ transaction });
+    for (const p of updated) await p.save({ transaction });
     const podium = [...activePlayers].sort((a, b) => b.etoiles - a.etoiles || b.pieces - a.pieces).slice(0, 3)
       .map(p => ({ discord_id: p.discord_id, etoiles: p.etoiles, pieces: p.pieces }));
     if (podium[0] && plateau.mode_data && typeof plateau.mode_data === 'object') {
@@ -78,26 +94,30 @@ export const endgame: SeasonEnd<Summary> = {
     return { bonus, podium };
   },
 
-  async announce(client: Client, raw: unknown, playerCount: number, wait: (ms: number) => Promise<void> = defaultWait) {
+  async announce(client: Client, raw: unknown, playerCount: number, options?: AnnounceOptions) {
     if (playerCount === 0) {
       await announce(client, "🏁 **FIN DE SAISON !** La saison a été clôturée. Aucun joueur n'a participé à cette session.");
       return;
     }
     const summary = endgame.parseSummary(raw);
+    if (!summary.podium.length) {
+      await announce(client, "🏆 **FIN DU PLATEAU 30 TOURS !** 🏆\n\nAucun joueur actif n'a terminé cette saison : pas de podium ni de vainqueur.");
+      return;
+    }
+    const wait = options?.wait ?? defaultWait;
     if (summary.bonus.length > 0) {
-      await announce(client, `✨ **LE MOMENT DES ÉTOILES BONUS !** ✨\n\n${summary.bonus.length} étoiles aléatoires vont être distribuées parmi plusieurs catégories…`);
+      const introCount = summary.bonus.length === 1
+        ? '1 étoile aléatoire va être distribuée'
+        : `${summary.bonus.length} étoiles aléatoires vont être distribuées`;
+      await sendRevealStep(client, `✨ **LE MOMENT DES ÉTOILES BONUS !** ✨\n\n${introCount} parmi plusieurs catégories…`, 'intro étoiles bonus');
       for (const star of summary.bonus) {
         await wait(BONUS_REVEAL_DELAY_MS);
         const award = star.winners.length
           ? `🏆 Décernée à : ${formatMentions(star.winners)} ! (+1 ⭐)`
           : '😔 Personne ne remporte cette étoile pour cette partie !';
-        await announce(client, `**${star.name}** (*${star.desc}*)\n${award}`);
+        await sendRevealStep(client, `**${star.name}** (*${star.desc}*)\n${award}`, star.name);
       }
       await wait(BONUS_REVEAL_DELAY_MS);
-    }
-    if (!summary.podium.length) {
-      await announce(client, "🏆 **FIN DU PLATEAU 30 TOURS !** 🏆\n\nAucun joueur actif n'a terminé cette saison : pas de podium ni de vainqueur.");
-      return;
     }
     const medals = ['🥇', '🥈', '🥉'];
     let podium = '🏆 **FIN DU PLATEAU 30 TOURS ! Voici le podium :** 🏆\n\n';
