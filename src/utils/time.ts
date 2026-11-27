@@ -8,10 +8,14 @@ const clockFormatter = new Intl.DateTimeFormat('en-US', {
 });
 
 export interface ParisClock { weekday: number; hour: number; minute: number }
-export interface PublicationSchedule { days: readonly number[]; hour: number; minute?: number }
+export interface PublicationSchedule { readonly days: readonly number[]; readonly hour: number; readonly minute?: number }
 
-/** Default enigma cron schedule: Monday to Friday at 17:00 Paris time (`0 17 * * 1-5`). */
-export const DEFAULT_ENIGMA_SCHEDULE: PublicationSchedule = { days: [1, 2, 3, 4, 5], hour: 17, minute: 0 };
+/** Default enigma cron schedule: Monday to Friday at 17:00 Paris time. */
+export const DEFAULT_ENIGMA_SCHEDULE: PublicationSchedule = Object.freeze({
+  days: Object.freeze([1, 2, 3, 4, 5]),
+  hour: 17,
+  minute: 0,
+});
 
 function parisParts(now: Date) {
   const parts = clockFormatter.formatToParts(now);
@@ -63,8 +67,7 @@ export function parisDayAt(weekday: number, hour: number, minute: number, from: 
   return new Date(parisWallToEpoch(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate(), hour, minute));
 }
 
-/** Next scheduled enigma publication strictly after `now` in Paris time. */
-export function nextEnigmaPublication(now: Date = gameNow(), schedule: PublicationSchedule = DEFAULT_ENIGMA_SCHEDULE): Date {
+function validatePublicationSchedule(schedule: PublicationSchedule): { days: readonly number[]; hour: number; minute: number } {
   const minute = schedule.minute ?? 0;
   if (!schedule.days.length || schedule.days.some(d => !Number.isInteger(d) || d < 0 || d > 6)) {
     throw new Error('Planning de publication invalide : jours hors [0..6].');
@@ -72,12 +75,25 @@ export function nextEnigmaPublication(now: Date = gameNow(), schedule: Publicati
   if (!Number.isInteger(schedule.hour) || schedule.hour < 0 || schedule.hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
     throw new Error('Planning de publication invalide : heure ou minute hors bornes.');
   }
+  return { days: schedule.days, hour: schedule.hour, minute };
+}
+
+/** Standard 5-field cron expression (`m h * * d,...`) derived from a validated publication schedule. */
+export function publicationCronExpression(schedule: PublicationSchedule = DEFAULT_ENIGMA_SCHEDULE): string {
+  const { days, hour, minute } = validatePublicationSchedule(schedule);
+  const uniqueDays = [...new Set(days)].sort((a, b) => a - b);
+  return `${minute} ${hour} * * ${uniqueDays.join(',')}`;
+}
+
+/** Next scheduled enigma publication strictly after `now` in Paris time. */
+export function nextEnigmaPublication(now: Date = gameNow(), schedule: PublicationSchedule = DEFAULT_ENIGMA_SCHEDULE): Date {
+  const { days, hour, minute } = validatePublicationSchedule(schedule);
   const p = parisParts(now);
   for (let offset = 0; offset <= 7; offset += 1) {
     const weekday = (p.weekday + offset) % 7;
-    if (!schedule.days.includes(weekday)) continue;
+    if (!days.includes(weekday)) continue;
     const shifted = new Date(Date.UTC(p.year, p.month - 1, p.day + offset));
-    const epoch = parisWallToEpoch(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate(), schedule.hour, minute);
+    const epoch = parisWallToEpoch(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate(), hour, minute);
     if (epoch > now.getTime()) return new Date(epoch);
   }
   throw new Error('Planning de publication invalide : aucune occurrence trouvée.');
@@ -86,10 +102,10 @@ export function nextEnigmaPublication(now: Date = gameNow(), schedule: Publicati
 /** Human-readable French publication label relative to `now` in Paris time (e.g. "aujourd'hui à 17h" or "lundi 12/10 à 17h"). */
 export function formatEnigmaPublication(target: Date, now: Date = gameNow()): string {
   const p = parisParts(target);
+  const ref = parisParts(now);
   const time = `${p.hour}h${p.minute ? String(p.minute).padStart(2, '0') : ''}`;
-  if (parisDateKey(target) === parisDateKey(now)) return `aujourd'hui à ${time}`;
+  if (p.year === ref.year && p.month === ref.month && p.day === ref.day) return `aujourd'hui à ${time}`;
   const day = String(p.day).padStart(2, '0');
   const month = String(p.month).padStart(2, '0');
   return `${frenchWeekdays[p.weekday]} ${day}/${month} à ${time}`;
 }
-

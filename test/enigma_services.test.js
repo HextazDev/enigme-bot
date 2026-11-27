@@ -151,7 +151,17 @@ test('CRON-16: nextEnigmaPublication and formatEnigmaPublication compute the rea
   assert.equal(fallMon.toISOString(), '2026-10-26T16:00:00.000Z', 'Monday 17:00 CET is 16:00Z');
   assert.equal(formatEnigmaPublication(fallMon, fallSat), 'lundi 26/10 à 17h');
 
-  // Custom schedule (reusable for configurable planning #19)
+  // UTC vs Paris midnight boundary (summer UTC+2)
+  const parisJustAfterMidnight = new Date('2026-10-07T22:30:00Z'); // Thu 08/10 00:30 CEST (Wed in UTC)
+  const thuSameDay = nextEnigmaPublication(parisJustAfterMidnight);
+  assert.equal(thuSameDay.toISOString(), '2026-10-08T15:00:00.000Z');
+  assert.equal(formatEnigmaPublication(thuSameDay, parisJustAfterMidnight), "aujourd'hui à 17h");
+  const parisBeforeMidnight = new Date('2026-10-07T21:30:00Z'); // Wed 07/10 23:30 CEST
+  const thuNextDay = nextEnigmaPublication(parisBeforeMidnight);
+  assert.equal(thuNextDay.toISOString(), '2026-10-08T15:00:00.000Z');
+  assert.equal(formatEnigmaPublication(thuNextDay, parisBeforeMidnight), 'jeudi 08/10 à 17h');
+
+  // Custom schedule (reusable for configurable planning #19) + single-day offset === 7
   const custom = { days: [2, 4], hour: 18, minute: 30 };
   const customNext = nextEnigmaPublication(wedBefore, custom);
   assert.equal(customNext.toISOString(), '2026-10-08T16:30:00.000Z');
@@ -159,14 +169,43 @@ test('CRON-16: nextEnigmaPublication and formatEnigmaPublication compute the rea
   const thuMorning = new Date('2026-10-08T08:00:00Z');
   assert.equal(formatEnigmaPublication(nextEnigmaPublication(thuMorning, custom), thuMorning), "aujourd'hui à 18h30");
 
-  // Invalid schedule rejected explicitly
-  assert.throws(() => nextEnigmaPublication(wedBefore, { days: [], hour: 17 }), /planning/i);
-  assert.throws(() => nextEnigmaPublication(wedBefore, { days: [7], hour: 17 }), /planning/i);
+  const weeklyWed = { days: [3], hour: 17 };
+  const nextWeekWed = nextEnigmaPublication(wedAt17, weeklyWed);
+  assert.equal(nextWeekWed.toISOString(), '2026-10-14T15:00:00.000Z');
+  assert.equal(formatEnigmaPublication(nextWeekWed, wedAt17), 'mercredi 14/10 à 17h');
+
+  // Default schedule is frozen and drives the cron expression
+  const { DEFAULT_ENIGMA_SCHEDULE, publicationCronExpression } = require('../src/utils/time');
+  assert.equal(Object.isFrozen(DEFAULT_ENIGMA_SCHEDULE), true);
+  assert.equal(Object.isFrozen(DEFAULT_ENIGMA_SCHEDULE.days), true);
+  assert.equal(publicationCronExpression(DEFAULT_ENIGMA_SCHEDULE), '0 17 * * 1,2,3,4,5');
+  assert.equal(publicationCronExpression({ days: [4, 2, 4], hour: 18, minute: 30 }), '30 18 * * 2,4');
+
+  // Invalid schedules rejected explicitly (days, hour, minute)
+  for (const invalid of [
+    { days: [], hour: 17 },
+    { days: [-1], hour: 17 },
+    { days: [7], hour: 17 },
+    { days: [1.5], hour: 17 },
+    { days: [1], hour: -1 },
+    { days: [1], hour: 24 },
+    { days: [1], hour: 17.5 },
+    { days: [1], hour: 17, minute: -1 },
+    { days: [1], hour: 17, minute: 60 },
+    { days: [1], hour: 17, minute: 0.5 },
+  ]) {
+    assert.throws(() => nextEnigmaPublication(wedBefore, invalid), /planning/i);
+    assert.throws(() => publicationCronExpression(invalid), /planning/i);
+  }
 });
 
-test('CRON-16: recordGuess NOT_YET message shows the real next publication date', async () => {
-  await setup({ enigme_status: 'programmee' });
+test('CRON-16: programEnigma returns next publication and recordGuess NOT_YET announces it', async () => {
+  await setup({ enigme_status: 'finished' });
   const saturday = new Date('2026-10-10T10:28:00Z'); // Sat 10/10 12:28 CEST
+  const programmed = await enigma.programEnigma({ text: 'Titre\nCorps', answer: 'soleil', hints: [null, null, null] }, saturday);
+  assert.equal(programmed.nextPublication.toISOString(), '2026-10-12T15:00:00.000Z');
+  assert.equal(programmed.nextPublicationLabel, 'lundi 12/10 à 17h');
+
   await assert.rejects(
     enigma.recordGuess('p1', saturday),
     err => err.code === 'NOT_YET' && err.message.includes('**lundi 12/10 à 17h**'),
@@ -179,5 +218,3 @@ test('CRON-16: recordGuess NOT_YET message shows the real next publication date'
 });
 
 test.after(() => sequelize.close());
-
-

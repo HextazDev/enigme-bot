@@ -6,8 +6,6 @@ import { getMapsForMode, getMode, getVariantsForMode } from '../gamemodes/regist
 import * as adminService from '../services/admin';
 import { programEnigma } from '../services/enigma';
 import { invalidateBoardCache } from '../utils/canvas';
-import { gameNow } from '../utils/clock';
-import { formatEnigmaPublication, nextEnigmaPublication } from '../utils/time';
 import { announce } from './channels';
 import { clearAllPendingTimers, clearPendingTimer } from './pending-timers';
 import config = require('../config');
@@ -19,12 +17,10 @@ export async function handleProgrammerEnigmeModal(interaction: ModalSubmitIntera
   const text = field('enigme_text');
   const answer = field('reponse');
   const hints: [string | null, string | null, string | null] = [optional(field('indice_1')), optional(field('indice_2')), optional(field('indice_3'))];
-  await programEnigma({ text, answer, hints });
-  const now = gameNow();
-  const next = formatEnigmaPublication(nextEnigmaPublication(now), now);
+  const { nextPublicationLabel } = await programEnigma({ text, answer, hints });
   console.log(`[ADMIN] Énigme programmée par ${interaction.user.id} (${hints.filter(Boolean).length} indice(s)).`);
   await editReply(interaction, { content: `✅ **Énigme programmée avec succès !**\n\n📝 **Titre :** ${text.split('\n')[0] || 'Énigme du jour'}\n🔑 **Réponse :** ${answer.trim()}\n`
-    + `💡 **Indices :** ${hints.filter(Boolean).length} indice(s) programmé(s)\n\n📣 L'énigme sera publiée automatiquement **${next}** dans le salon énigme.` });
+    + `💡 **Indices :** ${hints.filter(Boolean).length} indice(s) programmé(s)\n\n📣 L'énigme sera publiée automatiquement **${nextPublicationLabel}** dans le salon énigme.` });
 }
 
 async function startWizard(i: StringSelectMenuInteraction | ButtonInteraction): Promise<void> {

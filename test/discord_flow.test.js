@@ -218,6 +218,8 @@ test('CRON-16: modal_programmer_enigme announces the real next publication date 
   const satModal = makeModal();
   await dispatch(satModal);
   assert.match(contents(satModal.calls).join('\n'), /\*\*lundi 12\/10 à 17h\*\*/);
+  const saved = await Plateau.findByPk(1);
+  assert.deepEqual([saved.enigme_status, saved.enigme_text, saved.enigme_reponse], ['programmee', 'Mon titre\nTexte', 'soleil']);
 
   // Wednesday 07/10/2026 14:00 Paris -> aujourd'hui à 17h
   t.mock.timers.setTime(new Date('2026-10-07T12:00:00Z').getTime());
@@ -233,5 +235,3 @@ test('CRON-16: modal_programmer_enigme announces the real next publication date 
 });
 
 test.after(() => sequelize.close());
-
-
