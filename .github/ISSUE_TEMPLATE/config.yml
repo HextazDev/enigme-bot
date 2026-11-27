@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 📖 Guide d'Installation & Setup Dev
-    url: https://github.com/Hextaz/enigme-bot/blob/main/docs/SETUP_DEV.md
+    url: https://github.com/HextazDev/enigme-bot/blob/main/docs/SETUP_DEV.md
     about: Consultez le guide avant d'ouvrir un ticket pour un problème d'installation locale.
   - name: 🛡️ Registre des Cas Limites (EDGE_CASES.md)
-    url: https://github.com/Hextaz/enigme-bot/blob/main/docs/EDGE_CASES.md
+    url: https://github.com/HextazDev/enigme-bot/blob/main/docs/EDGE_CASES.md
     about: Vérifiez les cas limites répertoriés et les comportements attendus.

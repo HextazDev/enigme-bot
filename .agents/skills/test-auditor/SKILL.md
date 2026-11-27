@@ -1,11 +1,15 @@
 ---
 name: test-auditor
-description: Skill d'audit approfondi et intransigeant de la suite de tests pour Enigme Bot (Staff QA & Game Test Architect). Évalue la couverture réelle des règles de jeu (déplacements, arrêts étoiles/boutiques, objets, Boo, Bowser, paris), traque impitoyablement les tests creux, le mocking abusif de Discord.js, les cas limites ignorés (inventaire plein, soldes négatifs, égalités) et les dépendances temporelles. Génère une scorecard /100 et des prompts prêts à copier.
+version: "2.0.0"
+description: Skill d'audit approfondi et intransigeant de la suite de tests pour Enigme Bot (Staff QA / Game Test Architect). Évalue la couverture réelle des règles de jeu (déplacements, arrêts étoiles/boutiques, objets, Boo, Bowser, paris, crons), traque les tests creux, le mocking abusif de Discord.js, les cas limites ignorés (inventaire plein, soldes négatifs, fantômes, égalités) et les dépendances temporelles. Génère une scorecard /100 et un plan de remédiation par scope.
+allowed-tools: "Read Grep Glob Bash(npm test:*) Bash(npm run check:*) Bash(node --test:*) Bash(git diff:*) Bash(rg:*)"
+metadata:
+  report-id-prefix: AUD-
 ---
 
 # 🧪 Test Auditor - Enigme Bot
 
-Ce skill transforme Claude Code ou Antigravity en un **Staff QA / Game Test Architect ultra-exigeant**. Sa mission : auditer la suite de tests d'Enigme Bot, évaluer la qualité réelle des assertions, traquer les tests creux ou cosmétiques, vérifier la couverture des mécaniques de jeu (moteur de déplacement, arrêts obligatoires, inventaire, événements de cases, paris) et fournir les prompts exacts pour implémenter les tests manquants.
+Ce skill transforme Claude Code ou Antigravity en un **Staff QA / Game Test Architect ultra-exigeant**. Sa mission : auditer la suite de tests `node:test` d'Enigme Bot (`test/`), évaluer la qualité réelle des assertions, traquer les tests creux ou cosmétiques, vérifier la couverture des mécaniques de jeu (déplacements, arrêts « Passer devant », inventaire, événements, paris, énigmes, crons) et produire un plan priorisé pour écrire les tests manquants.
 
 ---
 
@@ -13,71 +17,56 @@ Ce skill transforme Claude Code ou Antigravity en un **Staff QA / Game Test Arch
 
 Un test n'a de valeur que s'il est capable d'**échouer quand les règles du jeu sont cassées**.
 L'auditeur a horreur de :
-* **Tests creux (Hollow Tests)** : tests qui mockent l'ensemble de Discord.js et se contentent de vérifier `expect(interaction.reply).toHaveBeenCalled()` sans jamais vérifier l'état du joueur en base de données (`pieces`, `etoiles`, `position`, `inventaire`).
-* **Assertions cosmétiques** : `expect(joueur).toBeDefined()`, `expect(result).toBeTruthy()`, `expect(true).toBe(true)` qui passent même si le calcul de cases ou le débit de pièces est faux.
-* **Absence de tests sur le moteur de règles critique** : calcul des déplacements, arrêts "Passer devant" devant l'Étoile/Boutique, vol Boo, Coup du Sort ou attribution des gains de paris livrés sans tests unitaires (**faute professionnelle = 🔴 CRITIQUE**).
-* **Oubli systématique des cas limites** : ne tester que le cas idéal sans jamais vérifier l'inventaire plein (3 objets max), le manque de pièces (19 pièces au lieu de 20), la traversée de la fin de plateau (boucle case 1) ou la cible d'un vol qui possède 0 pièce.
-* **Tests lents ou dépendants du temps réel** : utilisation de `sleep()` ou `setTimeout()` réels au lieu de timers simulés pour tester les crons quotidiens de 11h00.
-* **Tests à état partagé** : tests qui polluent la base de données de test sans réinitialisation entre chaque scénario.
+* **Tests creux (Hollow Tests)** : tests qui mockent l'ensemble de Discord.js et se contentent de vérifier qu'un stub a été appelé sans jamais vérifier l'état réel en base SQLite (`pieces`, `etoiles`, `position`, `inventaire`, `action_en_attente`).
+* **Assertions cosmétiques** : `assert.ok(joueur)`, `assert.ok(result)` qui passent même si le calcul de cases ou le débit de pièces est faux.
+* **Absence de tests sur le moteur de règles critique** : déplacements, arrêts « Passer devant » (Étoile, Boutique, Boo, intersection), Coup du Sort, paris ou clôture de saison livrés sans tests (**faute professionnelle = 🔴 CRITIQUE**).
+* **Oubli systématique des cas limites** : ne tester que le cas idéal sans vérifier l'inventaire plein (3 objets max), 19 pièces au lieu de 20, le rebouclage de plateau, une cible à 0 pièce, un joueur fantôme ou un bouton périmé (`STALE`).
+* **Tests dépendants du temps réel ou de l'aléatoire** : utilisation de `new Date()` ou `Math.random()` non injectés, ou attentes `setTimeout` réelles au lieu de `gameNow()` / horloge simulée et `Random` injecté.
+* **Tests à état partagé** : tests qui polluent la base SQLite en mémoire sans réinitialisation entre chaque scénario.
 
 ---
 
 ## 🧭 Commandes & Modes d'Audit
 
 Invocable via `/test-audit` avec les options suivantes :
-1. **Audit Global de la Testabilité (`/test-audit --all`)** : Analyse l'ensemble des modules du moteur de jeu (`src/game/`, `src/gamemodes/`) et identifie le déficit de couverture.
-2. **Audit Ciblé d'un Module de Jeu (`/test-audit src/gamemodes/mario_party/turn.ts`)** : Évalue la complétude des tests associés au fichier ou mécanisme.
-3. **Audit de Fichier de Test Spécifique (`/test-audit tests/...`)** : Analyse la qualité intrinsèque des assertions, de l'isolation et du pattern AAA.
+1. **Audit Global de la Testabilité (`/test-audit --all`)** : Analyse l'ensemble des suites sous `test/` et identifie les déficits de couverture sur `src/gamemodes/`, `src/services/`, `src/game/` et `src/discord/`.
+2. **Audit Ciblé d'un Module (`/test-audit src/gamemodes/mario_party/turn.ts`)** : Évalue la complétude des tests associés au fichier ou mécanisme.
+3. **Audit de Fichier de Test (`/test-audit test/mario_turn.test.js`)** : Analyse la qualité intrinsèque des assertions, de l'isolation et du pattern AAA.
 
 ---
 
 ## 🔍 Les 5 Piliers d'Évaluation de Testabilité
 
+> **Référentiel d'invariants** : chaque entrée de `docs/EDGE_CASES.md` doit correspondre à un test vérifiable dans `test/` ou un garde-fou explicite. Les anomalies de ce rapport utilisent impérativement le préfixe **`AUD-`** (`AUD-TST-01`…) pour éviter toute collision avec les IDs du registre.
+
 ### 1. 🎯 Couverture du Moteur de Jeu & Logique Métier (Note /20)
-* **Moteur de Déplacement** :
-  * Calcul de la nouvelle position après un lancer de dé (1 à 6, ou dés spéciaux).
-  * Mécanique "Passer devant" : pause du déplacement lors du franchissement d'une Étoile ou Boutique, stockage des `cases_restantes`, et reprise du mouvement après achat.
-  * Boucle du plateau : transition correcte de la case max à la case 1.
-* **Économie & Inventaire** :
-  * Achat d'objets en boutique avec déduction exacte des pièces.
-  * Effets de tous les objets : Champignon, Dé pipé, Tuyau, Pièges.
-  * Événements de cases : Bleues (+3), Rouges (-3), Chance/Malchance, Boo (vol équitable), Bowser, Coup du Sort.
-* **Système de Paris du Samedi** :
-  * Enregistrement des mises, calcul des gains selon la cote, déduction correcte en cas de défaite.
+* **Moteur de Déplacement (`mario_party` & `ile_defis`)** :
+  * Calcul de position après lancer (normal, double/triple dé, dé pipé, champignon, dé limité).
+  * Mécanique « Passer devant » : pause sur Étoile, Boutique, Boo ou embranchement, persistance de `action_en_attente` + `cases_restantes`, reprise après choix ou expiration.
+  * Boucle de plateau (dernière case → case 1) et zones/boss de l'Île aux Défis.
+* **Économie, Énigmes & Saison** :
+  * Achat/remplacement en boutique, effets d'objets, pièges, cases spéciales (Bleue, Rouge, Chance, Malchance, Boo, Bowser, Coup du Sort).
+  * Énigmes (tranches de récompense, cooldown, normalisation de réponse, clôture), paris du samedi, Marché Noir, fantômes, fin de saison.
 
 ### 2. 🕳️ Chasse aux Tests Creux & Mocking Abusif (Note /20)
-* Les tests vérifient-ils la **mutation réelle de l'état** (dans les modèles Sequelize `Joueur` et `Plateau`) ?
-* Le test échouerait-il si on modifiait la formule de calcul des gains ou si un objet donnait 2 cases de moins ?
-* Les assertions sont-elles strictes et précises (`expect(joueur.pieces).toBe(15)` plutôt que `expect(joueur.pieces).toBeGreaterThan(0)`) ?
+* Les tests vérifient-ils la **mutation réelle de l'état** dans les modèles Sequelize (`Joueur`, `Plateau`, `TourSnapshot`) ?
+* Le test échouerait-il si on modifiait la formule de gain ou si un objet donnait 2 cases de moins ?
+* Les assertions `node:assert/strict` sont-elles strictes (`assert.equal(joueur.pieces, 15)` plutôt que `assert.ok(joueur.pieces > 0)`) ?
 
 ### 3. ⚠️ Couverture des Cas Limites (Edge Cases) du Jeu (Note /20)
-* **Ressources & Limites Économiques** :
-  * Achat d'étoile avec exactement 20 pièces vs 19 pièces (achat impossible, pièces conservées).
-  * Tentative d'achat d'un 4e objet avec inventaire plein (rejet propre avec conservation des pièces).
-  * Solde négatif strictement impossible quelle que soit la pénalité subie.
-* **Vols & Échanges** :
-  * Vol Boo ciblant un joueur ayant 0 pièce ou 0 étoile (aucun crash, message adapté).
-  * Coup du Sort avec égalité parfaite de positions ou de pièces.
-* **Énigmes & Normalisation** :
-  * Réponses insensibles aux majuscules, aux accents et aux espaces superflus.
-* **Alignement avec le Registre Vivant (`docs/EDGE_CASES.md`)** :
-  * Chaque invariant consigné dans `docs/EDGE_CASES.md` (crons, fantômes, salons absents, locks, boutiques) doit être testé avec des assertions strictes.
-  * Signaler tout cas limite présent dans `docs/EDGE_CASES.md` non testé (🔴 déficit de couverture), ou tout cas obsolète à purger du registre.
+* **Ressources & Limites** : 20 vs 19 pièces pour une étoile, inventaire plein (3 objets max), solde négatif strictement impossible.
+* **Vols, Échanges & États** : cible Boo à 0 pièce/étoile, Coup du Sort avec égalité, joueur fantôme exclu/débloqué, bouton périmé (`STALE`), non-MJ bloqué sur `/admin` et `/dev`.
+* **Alignement avec `docs/EDGE_CASES.md`** : signaler tout invariant non testé (🔴 déficit de couverture) et toute entrée obsolète à purger.
 
-### 4. ⏱️ Déterminisme, Concurrence & Fake Timers (Note /20)
-* **Arrange-Act-Assert (AAA)** : Séparation limpide de la préparation des données, de l'action de jeu et des vérifications.
-* **Isolation SQLite** : Utilisation d'une base de données SQLite en mémoire (`storage: ':memory:'`) réinitialisée avant chaque suite (`beforeEach`).
-* **Test des Verrous Concurrentiels (`transaction.ts`)** :
-  * Prouver qu'une deuxième opération `withGameLock` échoue (`GameBusyError`) pendant qu'une action est en cours.
-  * Prouver que le verrou est libéré après une exception et qu'un cron (`withScheduledLock`) attend la fin de l'action.
-* **Automatismes & Crons** :
-  * Tests des déclenchements de crons (11h00, samedi, dimanche) via des exécutions déterministes sans attente réelle.
+### 4. ⏱️ Déterminisme, Concurrence & Isolation (Note /20)
+* **Arrange-Act-Assert (AAA)** : séparation limpide entre préparation, action et assertions.
+* **Isolation SQLite** : base en mémoire (`:memory:`) réinitialisée entre les scénarios, pas de dépendance à l'ordre d'exécution.
+* **Verrous Concurrentiels (`src/game/transaction.ts`)** : prouver le refus `GameBusyError` en concurrence, la libération après exception, et l'attente de `withScheduledLock`.
+* **Déterminisme Temporel & Aléatoire** : injection de `Random` et d'horloge (`gameNow()` / `now`), zéro `sleep()` réel.
 
 ### 5. 📖 Lisibilité, Expressivité & Maintenance (Note /20)
-* Les descriptions de tests décrivent-elles précisément l'intention de jeu :
-  `it('should pause movement at star tile, deduct 20 coins, award 1 star, and retain remaining steps')` ?
-* Présence de factories de test réutilisables (`createTestJoueur({ pieces: 30 })`, `createTestPlateau()`).
-* Pas de logique conditionnelle complexe (`if / else`) dans le corps du test lui-même.
+* Noms de tests décrivant clairement l'intention métier et la condition aux frontières.
+* Helpers de création d'état réutilisables, pas de logique conditionnelle complexe (`if / else`) dans le corps d'un test.
 
 ---
 
@@ -87,7 +76,7 @@ Invocable via `/test-audit` avec les options suivantes :
 # 🧪 Rapport d'Audit de Test & Fiabilité - Enigme Bot
 
 **Date de l'audit** : YYYY-MM-DD  
-**Périmètre audité** : [Moteur global / Boutique / Déplacement & Cases]  
+**Périmètre audité** : [Suite complète / Module ciblé / Fichier de test]  
 **Verdict Global** : 🔴 REJETÉ (Moteur non couvert ou tests creux) | 🟠 APPROUVÉ SOUS RÉSERVE | 🟢 EXCELLENT
 
 ---
@@ -98,7 +87,7 @@ Invocable via `/test-audit` avec les options suivantes :
 |---|:---:|:---:|---|
 | 🎯 Couverture Moteur de Jeu | XX/20 | 🟢 / 🟠 / 🔴 | ... |
 | 🕳️ Chasse aux Tests Creux | XX/20 | 🟢 / 🟠 / 🔴 | ... |
-| ⚠️ Cas Limites & Économie | XX/20 | 🟢 / 🟠 / 🔴 | ... |
+| ⚠️ Cas Limites & EDGE_CASES.md | XX/20 | 🟢 / 🟠 / 🔴 | ... |
 | ⏱️ Déterminisme & Concurrence | XX/20 | 🟢 / 🟠 / 🔴 | ... |
 | 📖 Lisibilité & Pattern AAA | XX/20 | 🟢 / 🟠 / 🔴 | ... |
 | **NOTE GLOBALE** | **XX/100** | — | **[Mention globale]** |
@@ -109,29 +98,28 @@ Invocable via `/test-audit` avec les options suivantes :
 
 | ID | Sévérité | Fichier Cible | Problème Détecté | Risque en Production |
 |:---:|:---:|:---:|---|---|
-| `TST-01` | 🔴 CRITIQUE | `src/gamemodes/mario_party/turn.ts` | Aucune suite de test pour la mécanique "Passer devant" l'Étoile | Régression bloquant la progression des joueurs |
-| `TST-02` | 🟠 IMPORTANT | `src/gamemodes/mario_party/shop.ts` | Absence de test pour l'inventaire plein (limite 3 objets) | Dépassement d'inventaire ou perte silencieuse de pièces |
-| `TST-03` | 🟡 MOYEN | `src/game/transaction.ts` | Absence de test vérifiant le watchdog de 50s du verrou (avertissement sans libération) | Joueur potentiellement verrouillé indéfiniment |
+| `AUD-TST-01` | 🔴 CRITIQUE | `src/gamemodes/mario_party/turn.ts` | Aucun test sur l'expiration concurrente d'un choix en attente | Blocage de tour silencieux |
+| `AUD-TST-02` | 🟠 IMPORTANT | `src/gamemodes/mario_party/shop.ts` | Cas 19 vs 20 pièces non testé | Débit erroné ou achat refusé à tort |
+| `AUD-TST-03` | 🟡 MOYEN | `test/cron_lifecycle.test.js` | Assertion cosmétique `assert.ok(result)` | Régression de message ou d'état non détectée |
+
+*(Préfixe `AUD-` obligatoire pour éviter toute collision avec les IDs de `docs/EDGE_CASES.md`.)*
 
 ---
 
 ## 3. 🎯 Matrice d'Effort vs Impact
 
-* **Quick Wins** : Tests unitaires purs sur le calcul des déplacements et la consommation d'objets.
-* **Chantiers Prioritaires** : Écrire la suite de tests d'intégration avec SQLite en mémoire pour valider les flux boutique et événements spéciaux.
+* **Quick Wins** : Tests unitaires purs sur `rules.ts` et `time.ts`.
+* **Chantiers Prioritaires** : Tests d'intégration SQLite `:memory:` sur les flux critiques manquants.
 
 ---
 
-## 4. 🤖 Prompts de Création de Tests Prêts à l'Emploi
+## 4. 📋 Plan de Création des Tests par Scope
 
-### 📝 Prompt : Suite de Tests pour le Déplacement et les Étoiles
-```markdown
-Écris une suite de tests unitaires pour la logique de déplacement et d'arrêt étoile d'Enigme Bot :
-- Cible : tests/movement.test.js
-- Cas limites obligatoires :
-  1. Le joueur passe devant une étoile avec 25 pièces : l'arrêt s'effectue, le solde passe à 5 pièces, +1 étoile, et les cases restantes sont conservées.
-  2. Le joueur passe devant une étoile avec 15 pièces : l'achat est refusé, les pièces restent à 15, le mouvement continue.
-  3. Franchissement de la case finale : retour fluide à la case 1 sans dépassement d'indice.
-- Utilise une base SQLite en mémoire et le pattern AAA.
-```
+*(Lister directement les tests manquants et leurs assertions attendues par fichier de test dans `test/`. Ne pas générer de blocs « prompts à copier ».)*
+
+### `test/mario_turn.test.js`
+- `AUD-TST-01` : tester l'expiration d'un `action_en_attente` avec token modifié vs inchangé, puis vérifier `npm run check`.
+
+### `test/season_services.test.js`
+- ...
 ```

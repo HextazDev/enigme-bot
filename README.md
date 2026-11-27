@@ -46,7 +46,7 @@ Pour tout savoir sur le fonctionnement, les règles et le code :
 
 ### 1. Cloner et installer les dépendances
 ```bash
-git clone git@github.com:Hextaz/enigme-bot.git
+git clone git@github.com:HextazDev/enigme-bot.git
 cd enigme-bot
 npm install
 ```
@@ -90,6 +90,6 @@ npm start
 ## 🤝 Collaboration & Contribution
 
 Le projet est développé en équipe selon les standards suivants :
-- **Git Flow** : Interdiction de commit direct sur `main` (déploiement automatique sur Lordi). Branches de features (`feat/...`, `fix/...`) avec Pull Requests.
+- **Git Flow** : Interdiction de commit direct sur `main` (publication automatique de l'image Docker de production sur GHCR). Branches de features (`feat/...`, `fix/...`) avec Pull Requests.
 - **TDD Strict & Anti-Band-Aids** : Tout ajout de règle ou correction de bug est validé par un test automatisé (`npm run check`).
 - **Concurrence & Fiabilité** : Verrou global (`withGameLock`), transactions SQL atomiques pour l'économie, migrations versionnées et accusé de réception Discord centralisé (`src/discord/interaction.ts`).

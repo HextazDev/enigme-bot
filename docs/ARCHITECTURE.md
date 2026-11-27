@@ -1,6 +1,6 @@
 # Architecture d’Enigme Bot
 
-Le bot héberge **une partie active** dans **un seul processus** Node.js (PM2, une instance). Tout le code applicatif est en TypeScript strict (`src/**/*.ts`) ; seuls les tests restent en JavaScript.
+Le bot héberge **une partie active** dans **un seul processus** Node.js (un seul conteneur / une seule instance). Tout le code applicatif est en TypeScript strict (`src/**/*.ts`) ; seuls les tests restent en JavaScript.
 
 ```mermaid
 flowchart TD
@@ -23,7 +23,7 @@ flowchart TD
 
 | Couche | Fichiers | Rôle | Interdits |
 |---|---|---|---|
-| Frontière Discord | `discord/interaction.ts` | MJ uniquement pour `admin_*`, `reponse_*`, `modal_programmer_enigme` et la commande `/dev` ; propriétaire du composant ; accusé de réception avant tout traitement ; verrou global ; `GameRuleError` → message éphémère sans `[ERROR]` ; 10062/40060 → `[TIMEOUT]`. | Logique métier. |
+| Frontière Discord | `discord/interaction.ts` | MJ uniquement pour `/admin`, `/dev`, `admin_*`, `reponse_*`, `modal_programmer_enigme` ; propriétaire du composant ; accusé de réception avant tout traitement ; verrou global ; `GameRuleError` → message éphémère sans `[ERROR]` ; 10062/40060 → `[TIMEOUT]`. | Logique métier. |
 | Routage / présentation | `discord/router.ts`, `commands/*.ts`, `gamemodes/*/discord.ts`, `discord/admin-interactions.ts` | Lire l'interaction, appeler un service, construire messages et composants, publier **après** validation SQL. | Écrire en base directement. |
 | Services transactionnels | `gamemodes/*/turn.ts`, `services/*.ts`, `game/endgame.ts` | Relire l'état, valider (`GameRuleError`), écrire dans **une** transaction sous `withGameLock`. | Appeler Discord. |
 | Règles pures | `gamemodes/mario_party/rules.ts`, `ile_defis/turn.ts#walk`, `landing.ts`, `shop.ts` | Dés, marche case par case, effets, boutique. Aléatoire injecté (`Random`). | Accès réseau. |

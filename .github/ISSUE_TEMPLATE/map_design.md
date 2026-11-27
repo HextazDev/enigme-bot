@@ -33,7 +33,7 @@ assignees: ""
 <!-- Si vous avez une maquette, un croquis ou une illustration de fond, glissez-la ici ! -->
 - [ ] Image de fond prête (`plateau.png` au ratio standard)
 - [ ] Croquis / Schéma de disposition fourni
-- [ ] Coordonnées des cases $(X, Y)$ pour le fichier `board.js` :
+- [ ] Coordonnées des cases $(X, Y)$ pour le fichier `board.ts` :
   <!-- Vous pouvez lister les coordonnées approximatives ou demander de l'aide à un dev -->
 
 ---
