@@ -1,4 +1,4 @@
-import { IlePending, MarioPending, PendingAction } from './types';
+import { IlePending, JsonObject, MarioPending, PendingAction } from './types';
 
 export function record(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`Données invalides : ${label}`);
@@ -55,7 +55,7 @@ export function validatePlayerModeData(value: unknown): void {
   if (data.double_lancer !== undefined && typeof data.double_lancer !== 'boolean') throw new TypeError('Double lancer invalide');
 }
 
-export interface PlayerSnapshot { discord_id: string; pieces?: number; etoiles?: number; position?: number; inventaire?: string[] }
+export interface PlayerSnapshot { discord_id: string; pieces?: number; etoiles?: number; position?: number; inventaire?: string[]; mode_data?: JsonObject }
 /** Older snapshots may omit fields; a present but malformed field must never be silently discarded. */
 export function parsePlayerSnapshots(value: unknown): PlayerSnapshot[] {
   if (value === null) return [];
@@ -68,6 +68,10 @@ export function parsePlayerSnapshots(value: unknown): PlayerSnapshot[] {
     if (data.etoiles !== undefined) result.etoiles = integer(data.etoiles, 'étoiles snapshot');
     if (data.position !== undefined) result.position = integer(data.position, 'position snapshot', 1);
     if (data.inventaire !== undefined) result.inventaire = strings(data.inventaire, 'inventaire snapshot');
+    if (data.mode_data !== undefined) {
+      validatePlayerModeData(data.mode_data);
+      result.mode_data = data.mode_data as JsonObject;
+    }
     return result;
   });
 }

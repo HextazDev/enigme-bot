@@ -1,7 +1,7 @@
 import { islandPending } from '../../domain/persisted';
 import { ids } from '../../discord/custom-ids';
 import { editGameReply } from '../../discord/game-view';
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, MessageFlags } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client } from 'discord.js';
 import { Op } from 'sequelize';
 import { Joueur } from '../../db/models';
 import { GameRuleError } from '../../domain/types';
@@ -30,7 +30,7 @@ async function present(client: Client, actor: turn.Actor, move: turn.MoveOutcome
   const mention = `<@${actor.id}>`;
   if (move.kind === 'stopped') {
     await announceWithBoard(client, `🎲 **${mention}** s'arrête en chemin sur la case **${move.joueur.position} (${move.stop.toUpperCase()})** !`, actor.id, turn.findCase(move.joueur.position).zone ?? null);
-    await editGameReply(target, { ...PROMPTS[move.stop], flags: MessageFlags.Ephemeral });
+    await editGameReply(target, PROMPTS[move.stop]);
     await armPendingTimer(actor.id, () => expire(client, actor, move.pending.token, target));
     return;
   }
@@ -38,7 +38,7 @@ async function present(client: Client, actor: turn.Actor, move: turn.MoveOutcome
   const effects = move.effects.map(event => `\n${formatEffect(event)}`).join('');
   await announceWithBoard(client, `🏁 **${mention}** termine son déplacement sur la case **${move.caseArrivee.id} (${move.caseArrivee.name})** !${effects}`,
     actor.id, turn.findCase(move.joueur.position).zone ?? null);
-  await editGameReply(target, { flags: MessageFlags.Ephemeral, content: move.double
+  await editGameReply(target, { content: move.double
     ? `🚶 Déplacement terminé sur la case **${move.joueur.position}** ! Tu as obtenu un **DOUBLE** : utilise la commande \`/jouer\` immédiatement pour faire ton lancer gratuit standard !`
     : `🚶 Déplacement terminé sur la case **${move.joueur.position}** ! Rendez-vous demain après la prochaine énigme !` });
 }
@@ -51,7 +51,9 @@ async function expire(client: Client, actor: turn.Actor, token: string, target: 
     portail: `⏰ **${mention}** a tremblé devant l'obstacle et a échoué automatiquement par manque de temps !`,
     cascade: `⏰ **${mention}** a tremblé devant l'obstacle et a échoué automatiquement par manque de temps !`,
     liane: `⏰ **${mention}** a trop tardé à s'élancer sur la liane. Le bot l'a poussé : **+${expired.roll} cases** !`,
-    intersection: `⏰ **${mention}** a hésité trop longtemps... Il a foncé tout droit par défaut !`,
+    intersection: expired.fellTo !== undefined
+      ? `⏰ **${mention}** a hésité trop longtemps à l'intersection et est tombé(e) à l'eau ! Retour case **${expired.fellTo}**.`
+      : `⏰ **${mention}** a hésité trop longtemps... Il a foncé tout droit par défaut !`,
     dragon: `⏰ **${mention}** n'a pas osé affronter le Dragon aujourd'hui. Il pourra retenter demain.`,
   };
   await announce(client, messages[expired.type]);
@@ -68,7 +70,7 @@ async function handle(i: GameComponent): Promise<boolean> {
     if (roll.bonus > 0) text += `\n✨ Ton dé bonus (**${roll.bonusType.toUpperCase()}**) s'ajoute et fait **${roll.bonus}** ! (Total : **${roll.standard + roll.bonus}** cases)`;
     if (roll.double) text += '\n🎉 **DOUBLE !** Tu obtiendras un lancer de dé standard gratuit supplémentaire immédiatement après la fin de ce déplacement !';
     await editGameReply(i, { components: [] });
-    await editGameReply(i, { content: text, flags: MessageFlags.Ephemeral });
+    await editGameReply(i, { content: text });
     await present(i.client, actor, roll.move, i);
   } else if (id.startsWith('ile_tenter_') || id.startsWith('ile_direction_')) {
     const stop = id.startsWith('ile_direction_') ? 'intersection' : ids.islandChallenge.decode(id);
@@ -115,6 +117,11 @@ function describe(mention: string, r: turn.ChallengeResult): { publicText: strin
   }
 }
 
+async function resolveUsername(client: Client, userId: string): Promise<string> {
+  try { return (await client.users?.fetch(userId))?.username ?? `<@${userId}>`; }
+  catch { return `<@${userId}>`; }
+}
+
 export const interactions: ModeInteractions = {
   handle,
   renderPending(joueur) {
@@ -126,8 +133,11 @@ export const interactions: ModeInteractions = {
     for (const joueur of await Joueur.findAll({ where: { action_en_attente: { [Op.ne]: null } } })) {
       const pending = islandPending(joueur.action_en_attente);
       if (!pending) continue;
-      const actor = { id: joueur.discord_id, username: joueur.discord_id };
-      await armPendingTimer(actor.id, () => expire(client, actor, pending.token, null));
+      const userId = joueur.discord_id;
+      await armPendingTimer(userId, async () => {
+        const actor = { id: userId, username: await resolveUsername(client, userId) };
+        await expire(client, actor, pending.token, null);
+      });
     }
     // After the timers on purpose: a choice lost by an older version waits for the player's next /jouer.
     const recovered = await turn.recoverLegacyPending();

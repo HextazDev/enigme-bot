@@ -75,4 +75,26 @@ test('guesses: one coin per proposal up to 3 a day, then a 30 minute cooldown', 
   await assert.rejects(enigma.recordGuess('p1', now), code('GHOST'));
 });
 
+test('ENIG-05: rejecting or penalizing a proposal is idempotent per DM proposalId', async () => {
+  await setup({}, { pieces: 5 });
+  await enigma.penalizeProposal('p1', 'dm-msg-42');
+  assert.equal((await Joueur.findByPk('p1')).pieces, 4);
+  await assert.rejects(enigma.penalizeProposal('p1', 'dm-msg-42'), code('ALREADY'));
+  await assert.rejects(enigma.rejectProposal('p1', false, 'dm-msg-42'), code('ALREADY'));
+  await assert.rejects(enigma.validateAnswer('p1', AT_17H30, 'dm-msg-42'), code('ALREADY'));
+  assert.equal((await Joueur.findByPk('p1')).pieces, 4);
+});
+
+test('ENIG-05: rollbackFailedGuess restores cooldown and participation coin when DM delivery fails', async () => {
+  await setup({}, { pieces: 2 });
+  const now = new Date('2026-10-07T15:00:00Z');
+  const guess = await enigma.recordGuess('p1', now);
+  assert.equal(guess.coinGranted, true);
+  assert.equal((await Joueur.findByPk('p1')).pieces, 3);
+  await enigma.rollbackFailedGuess('p1', guess.coinGranted, guess.previousLastGuess);
+  const p1 = await Joueur.findByPk('p1');
+  assert.deepEqual([p1.pieces, p1.guess_du_jour, p1.last_deviner_time], [2, 0, null]);
+});
+
 test.after(() => sequelize.close());
+

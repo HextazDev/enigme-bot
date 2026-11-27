@@ -3,7 +3,7 @@ import { afterGameAction } from '../game/transaction';
 import { PromptRow } from '../gamemodes/mode-interface';
 
 interface ReplyTarget { editReply(options: InteractionEditReplyOptions): Promise<unknown> }
-export interface GameView { content?: string; components?: PromptRow[]; files?: AttachmentBuilder[]; flags?: number }
+export interface GameView { content?: string; components?: PromptRow[]; files?: AttachmentBuilder[] }
 
 /** All game screens edit the original private message, including legacy buttons. */
 export function gameView(view: GameView): InteractionEditReplyOptions {
@@ -21,8 +21,8 @@ export function gameView(view: GameView): InteractionEditReplyOptions {
     components: [container], allowedMentions: { parse: [] } };
 }
 
-export async function editGameReply(target: ReplyTarget | null, view: GameView): Promise<void> {
+export async function editGameReply(target: ReplyTarget | null, view: GameView, options: { ordered?: boolean } = {}): Promise<void> {
   if (!target) return;
   const payload = gameView(view);
-  await afterGameAction(() => target.editReply(payload));
+  await afterGameAction(() => target.editReply(payload), options);
 }

@@ -7,6 +7,7 @@ import { handleSunday11hBlackMarket } from '../game/cron';
 import { getActiveMode, getAllModes } from '../gamemodes/registry';
 import * as adminService from '../services/admin';
 import { announce } from '../discord/channels';
+import { clearPendingTimer } from '../discord/pending-timers';
 import { parisClock } from '../utils/time';
 
 const resourceOption = (option: SlashCommandStringOption) => option.setName('ressource').setDescription('Type de ressource').setRequired(true)
@@ -41,18 +42,18 @@ export const data = new SlashCommandBuilder()
     .addUserOption(o => o.setName('joueur').setDescription('Le joueur concerné').setRequired(true)));
 
 function enigmaModal(answer: string): ModalBuilder {
-  const input = (id: string, label: string, style: TextInputStyle, value?: string) => {
-    const field = new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(style).setRequired(true);
+  const input = (id: string, label: string, style: TextInputStyle, required: boolean, value?: string) => {
+    const field = new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(style).setRequired(required);
     if (value) field.setValue(value);
     return new ActionRowBuilder<TextInputBuilder>().addComponents(field);
   };
   // The answer travels in a field, not in the customId (limited to 100 characters).
   return new ModalBuilder().setCustomId('modal_programmer_enigme').setTitle("Programmer l'énigme du jour").addComponents(
-    input('reponse', 'Réponse attendue', TextInputStyle.Short, answer.slice(0, 4000)),
-    input('enigme_text', 'Énigme du jour', TextInputStyle.Paragraph),
-    input('indice_1', 'Indice 18h', TextInputStyle.Paragraph),
-    input('indice_2', 'Indice 19h', TextInputStyle.Paragraph),
-    input('indice_3', 'Indice 20h', TextInputStyle.Paragraph));
+    input('reponse', 'Réponse attendue', TextInputStyle.Short, true, answer.slice(0, 4000)),
+    input('enigme_text', 'Énigme du jour', TextInputStyle.Paragraph, true),
+    input('indice_1', 'Indice 18h (optionnel)', TextInputStyle.Paragraph, false),
+    input('indice_2', 'Indice 19h (optionnel)', TextInputStyle.Paragraph, false),
+    input('indice_3', 'Indice 20h (optionnel)', TextInputStyle.Paragraph, false));
 }
 
 async function startMenu(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -79,11 +80,11 @@ async function resourceCommand(interaction: ChatInputCommandInteraction, give: b
   const plateau = await Plateau.findByPk(1);
   if (!plateau) throw new GameRuleError('NO_BOARD', 'Plateau introuvable.');
   let options: { label: string; value: string }[];
-  if (give) options = Object.values(getActiveMode(plateau).getItems(plateau.game_variant)).map(item => ({ label: item.name, value: item.name }));
+  if (give) options = Object.values(getActiveMode(plateau).getItems(plateau.game_variant)).slice(0, 25).map(item => ({ label: item.name, value: item.name }));
   else {
     const joueur = await Joueur.findByPk(target.id);
     if (!joueur) throw new GameRuleError('PLAYER_MISSING', "Ce joueur n'existe pas dans la base de données.");
-    options = [...new Set(joueur.inventaire)].map((name, index) => ({ label: `${index + 1}. ${name}`, value: name }));
+    options = [...new Set(joueur.inventaire)].slice(0, 25).map((name, index) => ({ label: `${index + 1}. ${name}`, value: name }));
   }
   if (!options.length) throw new GameRuleError('EMPTY', give ? "Ce mode de jeu n'a pas d'objets." : `<@${target.id}> n'a aucun objet dans son inventaire.`);
   const select = new StringSelectMenuBuilder().setCustomId(`admin_${give ? 'give' : 'remove'}_objet_${target.id}`)
@@ -101,11 +102,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       return;
     case 'lancer_enigme': {
       const tour = await adminService.skipEnigma();
-      await editReply(interaction, `📣 **Tour ${tour}/30** : Le tour a été incrémenté exceptionnellement sans énigme. Le plateau est ouvert.`);
+      const maxTours = getActiveMode(await Plateau.findByPk(1)).maxTours;
+      console.log(`[ADMIN] Tour incrémenté sans énigme (${tour}/${maxTours}) par ${interaction.user.id}.`);
+      await editReply(interaction, `📣 **Tour ${tour}/${maxTours}** : Le tour a été incrémenté exceptionnellement sans énigme. Le plateau est ouvert.`);
       return;
     }
     case 'stop': {
       const result = await endSeason(interaction.client);
+      console.log(`[ADMIN] Clôture manuelle de la saison par ${interaction.user.id} (alreadyEnded=${result.alreadyEnded}).`);
       await editReply(interaction, result.alreadyEnded
         ? "ℹ️ Aucune saison n'est actuellement en cours (la saison était déjà terminée ou clôturée)."
         : result.playerCount === 0
@@ -117,8 +121,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     case 'remove': return resourceCommand(interaction, false);
     case 'set_position': {
       const caseId = interaction.options.getInteger('case', true);
-      await adminService.setPosition(target().id, caseId);
-      await editReply(interaction, `📍 <@${target().id}> a été téléporté sur la case ${caseId}.`);
+      const userId = target().id;
+      await adminService.setPosition(userId, caseId);
+      clearPendingTimer(userId);
+      console.log(`[ADMIN] Joueur ${userId} téléporté case ${caseId} par ${interaction.user.id}.`);
+      await editReply(interaction, `📍 <@${userId}> a été téléporté sur la case ${caseId}.`);
       return;
     }
     case 'kick':
@@ -129,25 +136,33 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           new ButtonBuilder().setCustomId('admin_kick_cancel').setLabel('Annuler').setStyle(ButtonStyle.Secondary))],
       });
       return;
-    case 'reset_cooldown':
-      await adminService.resetCooldown(target().id);
-      await editReply(interaction, `⏳ Le cooldown de <@${target().id}> a été réinitialisé. Il peut rejouer immédiatement.`);
+    case 'reset_cooldown': {
+      const userId = target().id;
+      await adminService.resetCooldown(userId);
+      console.log(`[ADMIN] Cooldown réinitialisé pour ${userId} par ${interaction.user.id}.`);
+      await editReply(interaction, `⏳ Le cooldown de <@${userId}> a été réinitialisé. Il peut rejouer immédiatement.`);
       return;
+    }
     case 'tour': {
       const numero = interaction.options.getInteger('numero', true);
       await adminService.setTour(numero);
+      console.log(`[ADMIN] Tour défini à ${numero} par ${interaction.user.id}.`);
       await editReply(interaction, `Le tour a été défini sur **${numero}**.`);
       return;
     }
     case 'open_black_market':
       if (parisClock().weekday !== 0) throw new GameRuleError('NOT_SUNDAY', 'Cette commande ne peut être utilisée que le dimanche !');
-      if (!await handleSunday11hBlackMarket(interaction.client, true)) throw new GameRuleError('CLOSED', "Le Marché Noir n'est pas disponible (saison inactive ou mode sans boutique).");
+      if (!await handleSunday11hBlackMarket(interaction.client, true)) throw new GameRuleError('CLOSED', "Le Marché Noir n'est pas disponible (déjà ouvert aujourd'hui, saison inactive ou mode sans boutique).");
+      console.log(`[ADMIN] Marché Noir ouvert manuellement par ${interaction.user.id}.`);
       await editReply(interaction, '✅ Le Marché Noir a été ouvert manuellement avec succès et tous les joueurs ont été débloqués.');
       return;
     case 'annuler_tour': {
-      const { tour } = await adminService.undoTurn(target().id);
-      await editReply(interaction, `🔄 **Tour annulé !** <@${target().id}> a été remis dans son état initial du tour ${tour}. Il peut maintenant rejouer.`);
-      await announce(interaction.client, `🔄 **ANNULATION DE TOUR** : Le tour de <@${target().id}> a été annulé par un admin. Il a été remis dans son état initial.`);
+      const userId = target().id;
+      const { tour } = await adminService.undoTurn(userId);
+      clearPendingTimer(userId);
+      console.log(`[ADMIN] Tour ${tour} annulé pour ${userId} par ${interaction.user.id}.`);
+      await editReply(interaction, `🔄 **Tour annulé !** <@${userId}> a été remis dans son état initial du tour ${tour}. Il peut maintenant rejouer.`);
+      await announce(interaction.client, `🔄 **ANNULATION DE TOUR** : Le tour de <@${userId}> a été annulé par un admin. Il a été remis dans son état initial.`);
       return;
     }
     default: throw new GameRuleError('UNKNOWN', `Sous-commande inconnue : ${subcommand}`);

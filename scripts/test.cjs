@@ -5,4 +5,4 @@ const env = { ...process.env, NODE_ENV: 'test', ENIGMA_CHANNEL_ID: 'test-enigma'
 // Some embedding hosts set NODE_TEST_CONTEXT. Child runners must not inherit it.
 delete env.NODE_TEST_CONTEXT;
 const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...files], { stdio: 'inherit', env });
-process.exit(result.status || 0);
+process.exit(result.signal ? 1 : (result.status ?? 1));

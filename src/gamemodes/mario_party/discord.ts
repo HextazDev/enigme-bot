@@ -4,7 +4,7 @@ import { marioPending } from '../../domain/persisted';
 import { ids, selectedValue, numericChoice } from '../../discord/custom-ids';
 import { editGameReply } from '../../discord/game-view';
 import { afterGameAction } from '../../game/transaction';
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, MessageFlags, StringSelectMenuBuilder } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, StringSelectMenuBuilder } from 'discord.js';
 import { Op } from 'sequelize';
 import { Joueur, Plateau } from '../../db/models';
 import { GameRuleError, Item } from '../../domain/types';
@@ -83,7 +83,7 @@ async function present(client: Client, actor: turn.Actor, move: turn.MoveOutcome
     const where = `${move.joueur.cases_restantes > 0 ? 'en chemin ' : ''}sur la case **${move.caseId} (${STOP_LABELS[move.stop]})**`;
     await announceWithBoard(client, `${header} et s'arrête ${where} !\n*(🤫 Un menu secret s'est ouvert en dessous de sa commande pour interagir avec la case !)*`, actor.id);
     const prompt = move.stop === 'boutique' ? shopPrompt(move.joueur, move.shop) : promptFor(move.stop, move.joueur, move.plateau);
-    await editGameReply(target, { ...prompt, flags: MessageFlags.Ephemeral });
+    await editGameReply(target, prompt);
     await armPendingTimer(actor.id, () => expire(client, actor, move.pending.token, target));
     return;
   }
@@ -91,7 +91,7 @@ async function present(client: Client, actor: turn.Actor, move: turn.MoveOutcome
   await announceWithBoard(client, `${header} et atterrit sur la case **${move.caseArrivee.id} (${move.caseArrivee.type})** !${formatLandingEvents(move.effects)}`, actor.id);
   let text = `Tu as atterri sur la case ${move.caseArrivee.id} ! Regarde le salon <#${config.boardChannelId}> pour voir le résultat.`;
   if (move.joueur.a_le_droit_de_jouer) text += "\n\n🎯 **Ton déplacement précédent est terminé !** Tu peux maintenant relancer la commande `/jouer` pour effectuer ton action d'aujourd'hui !";
-  await editGameReply(target, { content: text, flags: MessageFlags.Ephemeral });
+  await editGameReply(target, { content: text });
 }
 const continuing = (actor: turn.Actor, move: turn.MoveOutcome) =>
   move.walked > 0 ? `🚶 **<@${actor.id}>** continue de ${move.walked} case(s)` : `📍 **<@${actor.id}>** reprend sur sa case`;
@@ -99,8 +99,8 @@ const continuing = (actor: turn.Actor, move: turn.MoveOutcome) =>
 /** The interaction token stays usable 15 minutes; past that, the prompt is reachable through /jouer. */
 async function followUpSafely(target: GameComponent | null, content: string): Promise<void> {
   if (!target) return;
-  try { await editGameReply(target, { content, flags: MessageFlags.Ephemeral }); }
-  catch (error) { console.warn('[WARN] Message privé d’expiration non distribué :', error instanceof Error ? error.message : error); }
+  try { await editGameReply(target, { content }); }
+  catch (error) { console.warn('[WARN] Message privé d’expiration non distribué :', error); }
 }
 
 async function expire(client: Client, actor: turn.Actor, token: string, target: GameComponent | null): Promise<void> {
@@ -128,7 +128,7 @@ async function showInventory(i: GameComponent): Promise<void> {
     if (key && !itemByKey(key).passive) row.addComponents(button(ids.use.encode({ key, index }), name, ButtonStyle.Primary));
   });
   if (!row.components.length) throw new GameRuleError('PASSIVE', "Aucun de tes objets ne s'utilise manuellement.");
-  await editGameReply(i, { content: `**Ton inventaire :**\nTu es sur la case **${joueur.position}**. L'Étoile est sur la case **${plateau.position_etoile}**.\nQuel objet veux-tu utiliser ?`, components: [row], flags: MessageFlags.Ephemeral });
+  await editGameReply(i, { content: `**Ton inventaire :**\nTu es sur la case **${joueur.position}**. L'Étoile est sur la case **${plateau.position_etoile}**.\nQuel objet veux-tu utiliser ?`, components: [row] });
 }
 
 async function handle(i: GameComponent): Promise<boolean> {
@@ -176,15 +176,17 @@ async function handle(i: GameComponent): Promise<boolean> {
     const type = id === 'boo_pieces' ? 'pieces' : 'etoile';
     const targets = await turn.booTargets(actor, type);
     if (!targets.length) throw new GameRuleError('NO_TARGET', `Personne n'a de ${type} à voler !`);
+    // Discord limits StringSelectMenu to 25 options; prioritize the richest targets.
+    const topTargets = [...targets].sort((a, b) => (type === 'pieces' ? b.pieces - a.pieces : b.etoiles - a.etoiles)).slice(0, 25);
     await afterGameAction(async () => {
-    const options = await Promise.all(targets.map(async t => {
-      let name = `Joueur ${t.discord_id.substring(0, 5)}`;
-      try { name = (await i.client.users.fetch(t.discord_id)).username; }
-      catch (error) { console.warn(`[WARN] Nom indisponible pour ${t.discord_id} :`, error instanceof Error ? error.message : error); }
-      return { label: `${name} (${type === 'pieces' ? `${t.pieces} pièces` : `${t.etoiles} étoiles`})`, value: t.discord_id };
-    }));
-    await editGameReply(i, { content: 'Qui veux-tu voler ?', flags: MessageFlags.Ephemeral,
-      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(`boo_target_${type}`).setPlaceholder('Choisis ta cible').addOptions(options))] });
+      const options = await Promise.all(topTargets.map(async t => {
+        let name = `Joueur ${t.discord_id.substring(0, 5)}`;
+        try { name = (await i.client.users.fetch(t.discord_id)).username; }
+        catch (error) { console.warn(`[WARN] Nom indisponible pour ${t.discord_id} :`, error); }
+        return { label: `${name} (${type === 'pieces' ? `${t.pieces} pièces` : `${t.etoiles} étoiles`})`.slice(0, 100), value: t.discord_id };
+      }));
+      await editGameReply(i, { content: 'Qui veux-tu voler ?',
+        components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(`boo_target_${type}`).setPlaceholder('Choisis ta cible').addOptions(options))] });
     });
   } else if (id === 'boo_annuler') {
     const { move } = await turn.booPass(actor);
@@ -211,7 +213,7 @@ async function handle(i: GameComponent): Promise<boolean> {
     if (key === 'DE_PIPE') {
       const select = new StringSelectMenuBuilder().setCustomId(ids.pipe.encode(index)).setPlaceholder('Choisis la valeur de ton dé')
         .addOptions(Array.from({ length: 10 }, (_, n) => ({ label: String(n + 1), value: String(n + 1) })));
-      await editGameReply(i, { content: 'Tu vas utiliser le **Dé pipé** ! Quelle valeur veux-tu ?', components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)], flags: MessageFlags.Ephemeral });
+      await editGameReply(i, { content: 'Tu vas utiliser le **Dé pipé** ! Quelle valeur veux-tu ?', components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)] });
       return true;
     }
     await useItem(i, actor, key, index, null);
@@ -234,6 +236,11 @@ async function useItem(i: GameComponent, actor: turn.Actor, key: string, index: 
   if (text.publicText) await announce(i.client, text.publicText);
 }
 
+async function resolveUsername(client: Client, userId: string): Promise<string> {
+  try { return (await client.users?.fetch(userId))?.username ?? `<@${userId}>`; }
+  catch { return `<@${userId}>`; }
+}
+
 export const interactions: ModeInteractions = {
   handle,
   renderPending(joueur, plateau) {
@@ -245,8 +252,11 @@ export const interactions: ModeInteractions = {
     for (const joueur of await Joueur.findAll({ where: { action_en_attente: { [Op.ne]: null } } })) {
       const pending = marioPending(joueur.action_en_attente);
       if (!pending) continue;
-      const actor = { id: joueur.discord_id, username: joueur.discord_id };
-      await armPendingTimer(actor.id, () => expire(client, actor, pending.token, null));
+      const userId = joueur.discord_id;
+      await armPendingTimer(userId, async () => {
+        const actor = { id: userId, username: await resolveUsername(client, userId) };
+        await expire(client, actor, pending.token, null);
+      });
     }
     // After the timers on purpose: a choice lost by an older version waits for the player's next /jouer.
     const recovered = await turn.recoverLegacyPending();

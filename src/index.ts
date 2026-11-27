@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { Client, Collection, Events, GatewayIntentBits, Options, Partials } from 'discord.js';
+import { Client, Collection, Events, GatewayIntentBits, Options } from 'discord.js';
 import { Plateau, sequelize } from './db/models';
 import { migrate } from './db/migrations';
 import { handleInteraction } from './discord/interaction';
@@ -8,8 +8,9 @@ import { Command, CommandRegistry, commandEnabled, createDispatcher } from './di
 import { clearAllPendingTimers } from './discord/pending-timers';
 import { initCronJobs, publishHint, stopCronJobs } from './game/cron';
 import { triggerEnigmaEnd } from './game/enigma';
-import { withScheduledLock } from './game/transaction';
+import { drainGameQueue, withScheduledLock } from './game/transaction';
 import { getActiveInteractions } from './gamemodes/registry';
+import { gameNow } from './utils/clock';
 import { startKumaHeartbeat, stopKumaHeartbeat } from './utils/health';
 import { parisClock } from './utils/time';
 import config = require('./config');
@@ -18,6 +19,10 @@ declare module 'discord.js' {
   interface Client { commands: CommandRegistry }
 }
 
+const MAX_TIMEOUT_MS = 2_147_483_647;
+let restartEnigmaTimer: NodeJS.Timeout | null = null;
+let shuttingDown = false;
+
 process.on('unhandledRejection', error => console.error('[ERROR] Promesse rejetée non interceptée :', error));
 process.on('uncaughtException', error => {
   console.error('[ERROR] Exception fatale :', error);
@@ -25,8 +30,7 @@ process.on('uncaughtException', error => {
 });
 
 export const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMessageReactions],
-  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
+  intents: [GatewayIntentBits.Guilds],
   makeCache: Options.cacheWithLimits({
     ...Options.DefaultMakeCacheSettings,
     MessageManager: 20, ThreadManager: 10, PresenceManager: 0, VoiceStateManager: 0, ReactionManager: 10, GuildMemberManager: 50, UserManager: 50,
@@ -51,54 +55,72 @@ client.on(Events.ShardResume, () => console.log('[HEALTH] Connexion Discord repr
 
 /** After a restart: close an overdue enigma, publish missed hints and re-arm the timers of pending choices. */
 async function resumeAfterRestart(): Promise<void> {
-  const plateau = await Plateau.findByPk(1);
-  if (!plateau) return;
-  await getActiveInteractions(plateau).rearmTimers(client);
+  const plateau = await withScheduledLock('restart', async () => {
+    let board = await Plateau.findByPk(1);
+    if (!board) board = await Plateau.create({ id: 1, position_etoile: 1, pieges_actifs: [] });
+    await getActiveInteractions(board).rearmTimers(client);
+    return board;
+  });
   if (plateau.enigme_status !== 'active' || !plateau.fin_enigme_timestamp) return;
-  const remaining = Number(plateau.fin_enigme_timestamp) - Date.now();
+  const remaining = Number(plateau.fin_enigme_timestamp) - gameNow().getTime();
   if (remaining <= 0) {
     console.log("[CRON] Redémarrage : l'énigme aurait dû se clôturer, clôture immédiate.");
     await withScheduledLock('restart', () => triggerEnigmaEnd(client));
     return;
   }
   console.log(`[CRON] Redémarrage : fin de l'énigme dans ${Math.floor(remaining / 60000)} minutes.`);
-  setTimeout(() => {
+  if (restartEnigmaTimer) clearTimeout(restartEnigmaTimer);
+  restartEnigmaTimer = setTimeout(() => {
+    restartEnigmaTimer = null;
     withScheduledLock('restart', () => triggerEnigmaEnd(client)).catch(error => console.error("[ERROR] Clôture de l'énigme :", error));
-  }, remaining);
+  }, Math.min(remaining, MAX_TIMEOUT_MS));
+  restartEnigmaTimer.unref();
   const { hour } = parisClock();
   for (const index of [1, 2, 3] as const) {
     if (hour >= 17 + index) await withScheduledLock('restart', () => publishHint(client, index));
   }
 }
 
+const dispatch = createDispatcher(client.commands);
+let interactionsBound = false;
+function bindInteractions(): void {
+  if (interactionsBound) return;
+  interactionsBound = true;
+  client.on(Events.InteractionCreate, interaction => {
+    const name = interaction.isCommand() ? interaction.commandName : 'customId' in interaction ? interaction.customId : String(interaction.type);
+    console.log(`[INTERACTION] ${interaction.user.id} - ${name}`);
+    handleInteraction(interaction, dispatch).catch(error => console.error('[ERROR] Routage Discord :', error));
+  });
+}
+
 client.once(Events.ClientReady, async ready => {
   console.log(`[HEALTH] Prêt ! Connecté en tant que ${ready.user.tag}`);
   try {
-    if (!await Plateau.findByPk(1)) await Plateau.create({ id: 1, position_etoile: 1, pieges_actifs: [] });
+    await resumeAfterRestart();
     initCronJobs(client);
     startKumaHeartbeat(client);
-    await resumeAfterRestart();
+    bindInteractions();
   } catch (error) {
     console.error('[ERROR] Initialisation après connexion :', error);
   }
 });
 
-const dispatch = createDispatcher(client.commands);
-client.on(Events.InteractionCreate, interaction => {
-  const name = interaction.isCommand() ? interaction.commandName : 'customId' in interaction ? interaction.customId : String(interaction.type);
-  console.log(`[INTERACTION] ${interaction.user.id} - ${name}`);
-  handleInteraction(interaction, dispatch).catch(error => console.error('[ERROR] Routage Discord :', error));
-});
-
 function shutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`[HEALTH] ${signal} reçu, arrêt propre...`);
   stopKumaHeartbeat();
   stopCronJobs();
   clearAllPendingTimers();
-  client.destroy().then(() => sequelize.close()).then(() => process.exit(0)).catch(error => {
-    console.error('[ERROR] Arrêt :', error);
-    process.exit(1);
-  });
+  if (restartEnigmaTimer) { clearTimeout(restartEnigmaTimer); restartEnigmaTimer = null; }
+  drainGameQueue()
+    .then(() => client.destroy())
+    .then(() => sequelize.close())
+    .then(() => process.exit(0))
+    .catch(error => {
+      console.error('[ERROR] Arrêt :', error);
+      process.exit(1);
+    });
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));

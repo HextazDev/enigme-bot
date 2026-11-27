@@ -1,5 +1,5 @@
-import { parsePlayerSnapshots, strings } from '../domain/persisted';
-import { at } from '../domain/types';
+import { parsePlayerSnapshots, strings, validatePlayerModeData, record } from '../domain/persisted';
+import { at, JsonObject } from '../domain/types';
 import { Transaction } from 'sequelize';
 import { Joueur, Plateau, TourSnapshot, sequelize } from '../db/models';
 import { GameRuleError, Random, isTrap } from '../domain/types';
@@ -25,7 +25,8 @@ export async function startSeason(modeId: string, variantId: string, mapId: stri
   const mode = getMode(modeId);
   if (!mode || !mode.variants[variantId] || !mode.maps[mapId]) throw new GameRuleError('PARAMS', "Paramètres d'initialisation invalides !");
   const cases = mode.getBoardCases(mapId);
-  const candidates = cases.filter(c => c.type !== 'Boutique' && c.type !== 'Boo' && c.id !== 1).map(c => c.id);
+  const hasStarFlags = cases.some(c => c.starEligible !== undefined);
+  const candidates = cases.filter(c => (hasStarFlags ? c.starEligible === true : c.type !== 'Boutique' && c.type !== 'Boo' && c.id !== 1)).map(c => c.id);
   if (candidates.length < 5) throw new GameRuleError('BOARD', 'Plateau trop petit pour placer l’étoile et les blocs cachés.');
   const pool = [...candidates];
   // Fisher-Yates: the star and the four hidden blocks never share a case.
@@ -60,6 +61,9 @@ export async function undoTurn(userId: string): Promise<{ tour: number }> {
     if (!snapshot) throw new GameRuleError('NO_SNAPSHOT', `Aucun snapshot trouvé pour <@${userId}> au tour ${plateau.tour}.`);
     const otherSnapshots = parsePlayerSnapshots(snapshot.autres_joueurs_snapshot);
     if (snapshot.inventaire !== null) strings(snapshot.inventaire, 'inventaire snapshot');
+    if (snapshot.boutique_du_jour !== null && snapshot.boutique_du_jour !== undefined) strings(snapshot.boutique_du_jour, 'boutique snapshot');
+    if (snapshot.mode_data !== null && snapshot.mode_data !== undefined) validatePlayerModeData(snapshot.mode_data);
+    if (snapshot.plateau_mode_data !== null && snapshot.plateau_mode_data !== undefined) record(snapshot.plateau_mode_data, 'plateau mode_data snapshot');
     Object.assign(joueur, {
       position: snapshot.position ?? joueur.position, temp_choix_direction: snapshot.temp_choix_direction ?? null,
       pieces: snapshot.pieces ?? joueur.pieces, etoiles: snapshot.etoiles ?? joueur.etoiles, inventaire: snapshot.inventaire ?? [],
@@ -67,11 +71,20 @@ export async function undoTurn(userId: string): Promise<{ tour: number }> {
       jours_inactifs: snapshot.jours_inactifs ?? 0, est_fantome: snapshot.est_fantome ?? false,
       fantome_unblock_used: snapshot.fantome_unblock_used ?? false, bonus_prochain_lancer: snapshot.bonus_prochain_lancer ?? 0,
       de_limite: snapshot.de_limite ?? false, type_de: snapshot.type_de ?? 'normal', de_pipe_valeur: snapshot.de_pipe_valeur ?? 0,
+      mode_data: snapshot.mode_data !== null && snapshot.mode_data !== undefined ? structuredClone(snapshot.mode_data) : joueur.mode_data,
+      boutique_du_jour: snapshot.boutique_du_jour !== null && snapshot.boutique_du_jour !== undefined ? [...snapshot.boutique_du_jour] : joueur.boutique_du_jour,
+      stat_cases_chance: snapshot.stat_cases_chance ?? joueur.stat_cases_chance,
+      stat_cases_malchance: snapshot.stat_cases_malchance ?? joueur.stat_cases_malchance,
+      stat_cases_avancees: snapshot.stat_cases_avancees ?? joueur.stat_cases_avancees,
+      stat_objets_utilises: snapshot.stat_objets_utilises ?? joueur.stat_objets_utilises,
     });
     await joueur.save({ transaction });
     if (snapshot.plateau_position_etoile !== null) plateau.position_etoile = snapshot.plateau_position_etoile;
     plateau.pieges_actifs = (snapshot.plateau_pieges_actifs ?? []).filter(isTrap);
     plateau.blocs_caches = snapshot.plateau_blocs_caches ?? {};
+    if (snapshot.plateau_mode_data !== null && snapshot.plateau_mode_data !== undefined) {
+      plateau.mode_data = structuredClone(snapshot.plateau_mode_data) as JsonObject;
+    }
     await plateau.save({ transaction });
     for (const other of otherSnapshots) {
       const player = await Joueur.findByPk(other.discord_id, { transaction });
@@ -81,6 +94,7 @@ export async function undoTurn(userId: string): Promise<{ tour: number }> {
         etoiles: typeof other.etoiles === 'number' ? other.etoiles : player.etoiles,
         inventaire: other.inventaire ?? player.inventaire,
         position: typeof other.position === 'number' ? other.position : player.position,
+        mode_data: other.mode_data !== undefined ? structuredClone(other.mode_data) : player.mode_data,
       });
       await player.save({ transaction });
     }

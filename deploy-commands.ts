@@ -8,7 +8,11 @@ async function deploy(): Promise<void> {
   if (!config.token || !config.clientId || !config.guildId) throw new Error('DISCORD_TOKEN, CLIENT_ID et GUILD_ID sont requis.');
   const commandsPath = path.join(__dirname, 'src', 'commands');
   const commands = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'))
-    .map(file => require(path.join(commandsPath, file)) as Command)
+    .map(file => {
+      const command = require(path.join(commandsPath, file)) as Partial<Command>;
+      if (!command.data || !command.execute) throw new Error(`Commande invalide : ${file}`);
+      return command as Command;
+    })
     .filter(commandEnabled)
     .map(command => command.data.toJSON());
   console.log(`[ADMIN] Rafraîchissement de ${commands.length} commandes (/).`);

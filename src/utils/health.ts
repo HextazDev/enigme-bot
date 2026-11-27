@@ -24,7 +24,9 @@ export async function sendHeartbeatPing(pushBaseUrl: string, health: Health, opt
     url.searchParams.set('msg', health.ok ? 'OK' : [!health.discord.up && 'Discord_down', !health.database.up && 'SQLite_down'].filter(Boolean).join('+'));
     if (health.ok) url.searchParams.set('ping', String(health.discord.ping));
     const response = await (options.fetchFn ?? fetch)(url.toString(), { method: 'GET', signal: AbortSignal.timeout(5000) });
-    return response.ok || response.status === 200;
+    const ok = response.ok || response.status === 200;
+    if (!ok) console.warn(`[WARN] Heartbeat Uptime Kuma refusé (HTTP ${response.status ?? 'inconnu'}).`);
+    return ok;
   } catch {
     // Do not log fetch errors containing the secret push URL.
     console.warn('[WARN] Envoi du heartbeat Uptime Kuma impossible.');
@@ -57,8 +59,12 @@ export function startKumaHeartbeat(client: HealthClient, options: HeartbeatOptio
     try {
       const health = await checkHealth(client, options.sequelizeInstance);
       failures = health.ok ? 0 : failures + 1;
+      if (!health.ok) {
+        console.warn(`[WARN] Santé dégradée (${failures}/${threshold}) : discord=${health.discord.up}, db=${health.database.up}${health.database.error ? ` (${health.database.error})` : ''}`);
+      }
       await sendHeartbeatPing(pushUrl, health, { fetchFn: options.fetchFn });
       if (failures >= threshold) {
+        console.error(`[ERROR] Seuil d'échecs santé atteint (${failures}/${threshold}), arrêt du processus.`);
         stopKumaHeartbeat(timer);
         (options.onExit ?? ((code: number) => process.exit(code)))(1);
       }

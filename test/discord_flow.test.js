@@ -99,10 +99,103 @@ test('the boundary turns a game rule refusal into a private message without logg
   assert.deepEqual(errors, []);
 });
 
-test('an unknown component id is refused instead of being silently ignored', async () => {
+test('an unknown component id or unknown modal submit is refused instead of being silently ignored', async () => {
   await sequelize.sync({ force: true });
   await Plateau.create({ id: 1, tour: 3, enigme_status: 'finished' });
   await assert.rejects(dispatch(component('replace_chance_champignon', ['0'])), error => error.code === 'UNKNOWN');
+  const unknownModal = {
+    customId: 'modal_inexistant', client, deferred: true, replied: false, user: { id: 'p1', username: 'P1' },
+    isChatInputCommand: () => false, isModalSubmit: () => true, isButton: () => false, isStringSelectMenu: () => false,
+  };
+  await assert.rejects(dispatch(unknownModal), error => error.code === 'UNKNOWN');
+});
+
+test('DISC-09: stateless plateau_zone_<zone> buttons render the requested island zone and reject Mario mode', async () => {
+  await sequelize.sync({ force: true });
+  await Plateau.create({ id: 1, tour: 3, enigme_status: 'finished', game_mode: 'ile_defis', game_map: 'board_game_island' });
+  await Joueur.create({ discord_id: 'p1', position: 42 });
+  const click = component('plateau_zone_volcan');
+  await dispatch(click);
+  const payload = click.calls.at(-1)[1];
+  assert.ok(payload.files.length === 1, 'zone board image attached');
+  assert.match(payload.embeds[0].toJSON().description, /Volcan/i);
+
+  await Plateau.update({ game_mode: 'mario_party', game_map: 'night_sky' }, { where: { id: 1 } });
+  await assert.rejects(dispatch(component('plateau_zone_volcan')), error => error.code === 'MODE');
+});
+
+test('PEND-07: rearmTimers schedules expiry for persisted pending choices and resolves player usernames', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { interactions: marioInteractions } = require('../src/gamemodes/mario_party/discord');
+  const { drainGameQueue } = require('../src/game/transaction');
+  await sequelize.sync({ force: true });
+  await Plateau.create({ id: 1, tour: 3, enigme_status: 'finished', position_etoile: 10 });
+  await Joueur.create({
+    discord_id: 'p1', position: 14, cases_restantes: 1,
+    action_en_attente: { type: 'intersection', case: 14, token: 'rearm-tok' },
+  });
+  const timerSent = [];
+  const fetchedUsers = [];
+  const fakeClient = {
+    channels: { fetch: async () => ({ send: async payload => { timerSent.push(payload); } }) },
+    users: { fetch: async id => { fetchedUsers.push(id); return { username: 'Alice' }; }, cache: new Map() },
+  };
+  try {
+    await marioInteractions.rearmTimers(fakeClient);
+    t.mock.timers.tick(5 * 60_000 + 100);
+    // Wait for the async timer callback to commit the DB update, then drain queued Discord publications.
+    for (let k = 0; k < 200 && (await Joueur.findByPk('p1')).action_en_attente !== null; k++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await drainGameQueue();
+    const p1 = await Joueur.findByPk('p1');
+    assert.equal(p1.action_en_attente, null);
+    assert.equal(p1.position, 15);
+    assert.ok(fetchedUsers.includes('p1'), 'rearmTimers resolves username from Discord client');
+    assert.ok(timerSent.some(msg => /<@p1>/.test(String(msg.content ?? msg))));
+  } finally {
+    clearAllPendingTimers();
+  }
+});
+
+test('/jouer does not register new players after season_ended, and /settings + /stats support ile_defis & uncached names', async () => {
+  const settingsCmd = require('../src/commands/settings');
+  const statsCmd = require('../src/commands/stats');
+  await sequelize.sync({ force: true });
+  await Plateau.create({ id: 1, tour: 30, enigme_status: 'season_ended', game_mode: 'mario_party', game_map: 'night_sky' });
+  let closedReply;
+  await jouer.execute({ user: { id: 'latecomer' }, client, editReply: async payload => { closedReply = payload; } });
+  assert.match(content(closedReply), /saison est terminée/i);
+  assert.equal(await Joueur.findByPk('latecomer'), null, 'no ghost row created on ended season');
+
+  await Plateau.update({ tour: 4, enigme_status: 'finished', game_mode: 'ile_defis', game_map: 'board_game_island' }, { where: { id: 1 } });
+  let settingsReply;
+  await settingsCmd.execute({
+    user: { id: 'island_new' },
+    options: { getBoolean: name => (name === 'rappel_enigme' ? true : false) },
+    editReply: async payload => { settingsReply = payload; },
+  });
+  const created = await Joueur.findByPk('island_new');
+  assert.deepEqual([created.auto_remind_guess, created.auto_remind_turn], [true, false]);
+  assert.equal(created.mode_data.bonus_de, 'none');
+  assert.ok(settingsReply.embeds.length === 1);
+
+  await Joueur.update({ position: 10 }, { where: { discord_id: 'island_new' } });
+  await Joueur.create({ discord_id: 'island_leader', position: 65, mode_data: { bonus_de: 'gold', double_lancer: false } });
+  let statsReply;
+  const statsClient = {
+    users: {
+      cache: new Map(),
+      fetch: async id => ({ username: id === 'island_leader' ? 'Capitaine' : 'Matelot' }),
+    },
+  };
+  await statsCmd.execute({ client: statsClient, editReply: async payload => { statsReply = payload; } });
+  const fields = statsReply.embeds[0].toJSON().fields;
+  assert.equal(fields[0].name, '#1 - Capitaine');
+  assert.match(fields[0].value, /Case 65/);
+  assert.doesNotMatch(fields[0].value, /Étoiles/);
+  assert.equal(fields[1].name, '#2 - Matelot');
 });
 
 test.after(() => sequelize.close());
+

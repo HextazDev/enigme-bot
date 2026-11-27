@@ -38,7 +38,7 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
     };
     const mockClient = {
       channels: {
-        fetch: async (id) => mockChannel
+        fetch: async (_id) => mockChannel
       },
       guilds: {
         fetch: async () => null
@@ -78,3 +78,5 @@ test('Season End & Empty Board Suite (TDD)', async (t) => {
     assert.equal(sentMessages.length, 0, 'No ping should be sent when 0 players and no enigma');
   });
 });
+
+test.after(() => sequelize.close());

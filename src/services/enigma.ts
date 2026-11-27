@@ -52,11 +52,13 @@ export async function programEnigma(input: EnigmaInput): Promise<void> {
     const plateau = await Plateau.findByPk(1, { transaction });
     if (!plateau || plateau.enigme_status === 'season_ended') throw new GameRuleError('CLOSED', 'Aucune saison en cours : lance-la avec `/admin start` avant de programmer une énigme.');
     if (plateau.enigme_status === 'active') throw new GameRuleError('ACTIVE', "Une énigme est en cours : attends sa clôture à 21h avant d'en programmer une nouvelle.");
+    const nextModeData = { ...plateau.mode_data };
+    delete nextModeData.propositions_jugees;
     Object.assign(plateau, {
       enigme_text: input.text, enigme_reponse: input.answer.trim(),
       enigme_indice1: input.hints[0], enigme_indice2: input.hints[1], enigme_indice3: input.hints[2],
       enigme_status: 'programmee', enigme_publiee: false, indice1_publie: false, indice2_publie: false, indice3_publie: false,
-      enigme_gagnants: [], enigme_resolue: false, fin_enigme_timestamp: null,
+      enigme_gagnants: [], enigme_resolue: false, fin_enigme_timestamp: null, mode_data: nextModeData,
     });
     await plateau.save({ transaction });
     await Joueur.update({ a_trouve_enigme: false }, { where: {}, transaction });
@@ -65,16 +67,24 @@ export async function programEnigma(input: EnigmaInput): Promise<void> {
 
 export interface Validation { tranche: string; pieces: number; ileDice: string | null; late: boolean }
 
-/** MJ accepts an answer. A second validation of the same player is refused, so a double click never pays twice. */
-export async function validateAnswer(userId: string, submittedAt: Date): Promise<Validation> {
+function judgedProposals(plateau: Plateau): string[] {
+  const raw = plateau.mode_data.propositions_jugees;
+  return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string') : [];
+}
+
+/** MJ accepts an answer. A second validation of the same player or DM message is refused, so a double click never pays twice. */
+export async function validateAnswer(userId: string, submittedAt: Date, proposalId?: string): Promise<Validation> {
   return withGameLock('mj', () => sequelize.transaction(async transaction => {
     const plateau = await Plateau.findByPk(1, { transaction });
     if (!plateau || (plateau.enigme_status !== 'active' && plateau.enigme_status !== 'finished')) throw new GameRuleError('INACTIVE', "L'énigme n'est pas active.");
+    const judged = judgedProposals(plateau);
+    if (proposalId && judged.includes(proposalId)) throw new GameRuleError('ALREADY', 'Cette proposition a déjà été traitée.');
     if (plateau.enigme_gagnants.some(g => g.discord_id === userId)) throw new GameRuleError('ALREADY', 'Cette réponse a déjà été validée.');
     const { tranche, pieces } = rewardBracket(submittedAt);
     const ile = plateau.game_mode === 'ile_defis';
     const winner: JsonObject = { discord_id: userId, pieces: ile ? 0 : pieces, tranche };
     plateau.enigme_gagnants = [...plateau.enigme_gagnants, winner];
+    if (proposalId) plateau.mode_data = { ...plateau.mode_data, propositions_jugees: [...judged, proposalId] };
     await plateau.save({ transaction });
     const joueur = await Joueur.findByPk(userId, { transaction });
     if (joueur) {
@@ -88,9 +98,17 @@ export async function validateAnswer(userId: string, submittedAt: Date): Promise
   }));
 }
 
-/** Non-compliant proposal: the participation coin is taken back. */
-export async function penalizeProposal(userId: string): Promise<void> {
+/** MJ rejects a proposal (and optionally removes 1 coin for spam). Idempotent per DM proposalId. */
+export async function rejectProposal(userId: string, spam: boolean, proposalId?: string): Promise<void> {
   return withGameLock('mj', () => sequelize.transaction(async transaction => {
+    const plateau = await Plateau.findByPk(1, { transaction });
+    if (plateau && proposalId) {
+      const judged = judgedProposals(plateau);
+      if (judged.includes(proposalId)) throw new GameRuleError('ALREADY', 'Cette proposition a déjà été traitée.');
+      plateau.mode_data = { ...plateau.mode_data, propositions_jugees: [...judged, proposalId] };
+      await plateau.save({ transaction });
+    }
+    if (!spam) return;
     const joueur = await Joueur.findByPk(userId, { transaction });
     if (joueur && joueur.pieces > 0) {
       joueur.pieces -= 1;
@@ -99,7 +117,12 @@ export async function penalizeProposal(userId: string): Promise<void> {
   }));
 }
 
-export interface Guess { coinGranted: boolean }
+/** Non-compliant proposal: the participation coin is taken back (idempotent when proposalId is supplied). */
+export async function penalizeProposal(userId: string, proposalId?: string): Promise<void> {
+  return rejectProposal(userId, true, proposalId);
+}
+
+export interface Guess { coinGranted: boolean; autoRemind: boolean; previousLastGuess: Date | null }
 const COOLDOWN_MS = 30 * 60_000;
 export function guessCooldownRemaining(lastGuess: Date | null, now: Date): number {
   if (!lastGuess) return 0;
@@ -117,11 +140,26 @@ export async function recordGuess(userId: string, now: Date): Promise<Guess & { 
     if (plateau.enigme_status !== 'active') throw new GameRuleError('FINISHED', "L'énigme du jour est déjà terminée !");
     if (joueur.a_trouve_enigme) throw new GameRuleError('FOUND', "🎉 Tu as déjà trouvé la bonne réponse aujourd'hui ! Tu ne peux plus deviner.");
     const remainingMinutes = guessCooldownRemaining(joueur.last_deviner_time, now);
-    if (remainingMinutes > 0) return { coinGranted: false, remainingMinutes };
+    if (remainingMinutes > 0) return { coinGranted: false, remainingMinutes, autoRemind: joueur.auto_remind_guess, previousLastGuess: joueur.last_deviner_time };
+    const previousLastGuess = joueur.last_deviner_time;
     const coinGranted = joueur.guess_du_jour < 3;
     if (coinGranted) { joueur.pieces += 1; joueur.guess_du_jour += 1; }
     joueur.last_deviner_time = now;
     await joueur.save({ transaction });
-    return { coinGranted, remainingMinutes: 0 };
+    return { coinGranted, remainingMinutes: 0, autoRemind: joueur.auto_remind_guess, previousLastGuess };
   }));
+}
+
+/** Undo a committed guess if the DM to the MJ could not be delivered so the player is not locked out for 30 minutes. */
+export async function rollbackFailedGuess(userId: string, coinGranted: boolean, previousLastGuess: Date | null): Promise<void> {
+  return withGameLock(userId, () => sequelize.transaction(async transaction => {
+    const joueur = await Joueur.findByPk(userId, { transaction });
+    if (!joueur) return;
+    joueur.last_deviner_time = previousLastGuess;
+    if (coinGranted) {
+      joueur.pieces = Math.max(0, joueur.pieces - 1);
+      joueur.guess_du_jour = Math.max(0, joueur.guess_du_jour - 1);
+    }
+    await joueur.save({ transaction });
+  }), true);
 }

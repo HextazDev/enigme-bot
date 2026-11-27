@@ -63,16 +63,20 @@ test('Health & Uptime Kuma Suite', async (t) => {
       database: { up: true }
     };
 
-    const pushBaseUrl = 'https://status.hextaz.dev/api/push/testtoken';
+    const pushBaseUrl = 'https://status.example.test/api/push/testtoken';
     const sent = await sendHeartbeatPing(pushBaseUrl, health, { fetchFn: mockFetch });
 
     assert.equal(sent, true);
     assert.ok(calledUrl.startsWith(pushBaseUrl));
     assert.ok(calledUrl.includes('status=up'));
     assert.ok(calledUrl.includes('ping=42'));
+
+    const rejected = await sendHeartbeatPing(pushBaseUrl, health, { fetchFn: async () => ({ ok: false, status: 404 }) });
+    assert.equal(rejected, false);
   });
 
-  await t.test('auto-healing: triggers onExit callback when consecutive failures reach maxFailures', async () => {
+  await t.test('auto-healing: triggers onExit callback when consecutive failures reach maxFailures', async (sub) => {
+    sub.mock.timers.enable({ apis: ['setInterval'] });
     const mockClient = {
       isReady: () => false, // Always failing
       ws: { status: 5, ping: -1 }
@@ -90,15 +94,18 @@ test('Health & Uptime Kuma Suite', async (t) => {
 
     const timer = startKumaHeartbeat(mockClient, {
       sequelizeInstance: mockSequelize,
-      pushUrl: 'https://status.hextaz.dev/api/push/testtoken',
-      intervalMs: 20,
+      pushUrl: 'https://status.example.test/api/push/testtoken',
+      intervalMs: 1000,
       maxFailures: 2,
       onExit: mockOnExit,
       fetchFn: async () => ({ ok: true })
     });
 
-    // Wait for at least 2 ticks
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    sub.mock.timers.tick(1000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(exitCalled, false);
+    sub.mock.timers.tick(1000);
+    await new Promise(resolve => setImmediate(resolve));
     stopKumaHeartbeat(timer);
 
     assert.equal(exitCalled, true);

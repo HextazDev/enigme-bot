@@ -20,11 +20,11 @@ const config = {
     boardChannelId: process.env.BOARD_CHANNEL_ID,
     mjUserId: process.env.MJ_USER_ID,
     roleEnigmeId: process.env.ROLE_ENIGME_ID,
-    // Role given to the season winner (historical value kept as default).
-    winnerRoleId: process.env.WINNER_ROLE_ID || '1490005606273388555',
+    // Optional Discord role given to the season winner (configured per instance).
+    winnerRoleId: process.env.WINNER_ROLE_ID || '',
     kumaPushUrl: process.env.KUMA_PUSH_URL || null,
-    kumaPushIntervalSec: parseInt(process.env.KUMA_PUSH_INTERVAL_SEC || '60', 10),
-    kumaMaxFailures: parseInt(process.env.KUMA_MAX_FAILURES || '3', 10),
+    kumaPushIntervalSec: Number(process.env.KUMA_PUSH_INTERVAL_SEC || '60'),
+    kumaMaxFailures: Number(process.env.KUMA_MAX_FAILURES || '3'),
     // Dev bot only: registers /dev (cron steps, virtual clock). Never set in production.
     devMode: process.env.DEV_MODE === '1',
 };
@@ -34,5 +34,9 @@ function validateConfig(): void {
     if (!config[key]) throw new Error(`Configuration manquante : ${key}`);
   }
   if (!Number.isInteger(config.kumaPushIntervalSec) || config.kumaPushIntervalSec <= 0 || !Number.isInteger(config.kumaMaxFailures) || config.kumaMaxFailures <= 0) throw new Error('Configuration de surveillance invalide');
+  if (config.kumaPushUrl) {
+    try { new URL(config.kumaPushUrl); }
+    catch { throw new Error('Configuration de surveillance invalide : KUMA_PUSH_URL'); }
+  }
 }
 export = config;

@@ -47,13 +47,17 @@ test('Ghost Security (SEC-01) & Plateau Defaults (DATA-01) Suite', async (t) => 
     };
     const mockClient = {
       channels: {
-        fetch: async (id) => mockChannel
+        fetch: async (_id) => mockChannel
       }
     };
 
+    const previousChannelId = config.enigmaChannelId;
     config.enigmaChannelId = 'fake_enigma_channel';
-
-    await triggerEnigmaEnd(mockClient);
+    try {
+      await triggerEnigmaEnd(mockClient);
+    } finally {
+      config.enigmaChannelId = previousChannelId;
+    }
 
     const refreshedNormal = await Joueur.findByPk(normalPlayer.discord_id);
     const refreshedGhost = await Joueur.findByPk(ghostPlayer.discord_id);
@@ -90,3 +94,5 @@ test('Ghost Security (SEC-01) & Plateau Defaults (DATA-01) Suite', async (t) => 
     assert.equal(refreshedGhost.stat_cases_avancees, 0, 'Ghost player must not have advanced');
   });
 });
+
+test.after(() => sequelize.close());

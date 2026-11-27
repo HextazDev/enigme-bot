@@ -116,4 +116,68 @@ test('a rock pushes back every player of the zone, including the one who trigger
   assert.equal((await Joueur.findByPk('p3')).position, 40);
 });
 
+test('ILE-08: expired intersection applies the same 50% fall risk; expired vine jumps automatically', async () => {
+  await setup({ position: 13 });
+  const fallRun = await ile.startTurn(actor, { random: seq([d6(4)]) });
+  const fell = await ile.expirePending(actor, fallRun.move.pending.token, { random: seq([0.1]) });
+  assert.equal(fell.type, 'intersection');
+  assert.equal(fell.fellTo, 10);
+  assert.equal(fell.move, null);
+  assert.equal((await reload()).position, 10);
+
+  await setup({ position: 13 });
+  const safeRun = await ile.startTurn(actor, { random: seq([d6(3)]) });
+  const safe = await ile.expirePending(actor, safeRun.move.pending.token, { random: seq([0.9, 0.1]) });
+  assert.equal(safe.type, 'intersection');
+  assert.equal(safe.fellTo, undefined);
+  assert.equal(safe.move.kind, 'landed');
+
+  await setup({ position: 10 });
+  const vineRun = await ile.startTurn(actor, { random: seq([d6(3)]) });
+  assert.equal(vineRun.move.stop, 'liane');
+  const jumped = await ile.expirePending(actor, vineRun.move.pending.token, { random: seq([d6(1)]) });
+  assert.equal(jumped.type, 'liane');
+  assert.equal(jumped.roll, 1);
+  assert.equal((await reload()).position, 13);
+});
+
+test('PEND-09: resolveChallenge is locked during an active enigma', async () => {
+  await setup({ position: 73, action_en_attente: { type: 'dragon', case: 73, token: 't' } });
+  await Plateau.update({ enigme_status: 'active' }, { where: { id: 1 } });
+  await assert.rejects(ile.resolveChallenge(actor, 'dragon', null, { random: seq([d6(6)]) }), code('LOCKED'));
+});
+
+test('ILE-08: unblockGhost on the island checks season_ended and active enigma consistently', async () => {
+  await setup({ est_fantome: true, a_le_droit_de_jouer: false, a_joue_ce_tour: false });
+  assert.equal(await ile.unblockGhost('p1'), true);
+  const p1 = await reload();
+  assert.deepEqual([p1.est_fantome, p1.fantome_unblock_used, p1.a_le_droit_de_jouer], [false, true, true]);
+
+  await setup({ est_fantome: true, a_le_droit_de_jouer: false });
+  await Plateau.update({ enigme_status: 'season_ended' }, { where: { id: 1 } });
+  assert.equal(await ile.unblockGhost('p1'), false);
+});
+
+test('Elan boost, Echange swap, and full transaction rollback on DB write failure', async () => {
+  await setup({ position: 5 });
+  const boost = await ile.startTurn(actor, { random: seq([d6(1), 0.9]) }); // lands on 6 (Elan), +3 -> 9
+  assert.equal(boost.move.effects[0].kind, 'boost');
+  assert.equal((await reload()).position, 9);
+
+  await setup({ position: 7 });
+  await Joueur.create({ discord_id: 'leader', position: 50 });
+  const swap = await ile.startTurn(actor, { random: seq([d6(1), d6(5)]) }); // lands on 8 (Echange), roll 5 -> swap with first
+  assert.equal(swap.move.effects[0].kind, 'exchange');
+  assert.equal((await reload()).position, 50);
+  assert.equal((await Joueur.findByPk('leader')).position, 8);
+
+  await setup({ position: 5 });
+  Joueur.addHook('beforeUpdate', 'fail-ile', () => { throw new Error('Injected island failure'); });
+  try { await assert.rejects(ile.startTurn(actor, { random: seq([d6(1)]) }), /Injected/); }
+  finally { Joueur.removeHook('beforeUpdate', 'fail-ile'); }
+  assert.equal((await reload()).position, 5);
+  assert.equal((await reload()).a_le_droit_de_jouer, true);
+});
+
 test.after(() => sequelize.close());
+

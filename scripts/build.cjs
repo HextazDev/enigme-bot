@@ -17,4 +17,3 @@ function copyAssets(dir) {
   }
 }
 copyAssets('src');
-copyAssets('assets');
