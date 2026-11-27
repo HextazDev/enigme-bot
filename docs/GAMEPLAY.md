@@ -85,7 +85,7 @@ Les joueurs de la moitié basse du classement voient plus souvent les objets rar
 
 ### Fin de saison (tour 30 ou `/admin stop`)
 
-2 **étoiles bonus** sont tirées parmi 6 catégories (Chance, Malchance, Grand Voyageur, Paresseux, Génie, Acheteur Compulsif ; les égalités gagnent toutes). Podium par étoiles puis pièces ; le premier reçoit le rôle Vainqueur.
+2 **étoiles bonus** sont tirées parmi 6 catégories (Chance, Malchance, Grand Voyageur, Paresseux, Génie, Acheteur Compulsif) et révélées **une par une** avec suspense avant le podium. Seuls les joueurs **actifs** (non fantômes) ayant un score strictement positif (`> 0`, y compris pour l'Étoile du Paresseux) sont éligibles ; les ex-æquo actifs partagent l'étoile (+1 ⭐ chacun). Podium des joueurs actifs par étoiles puis pièces ; le premier reçoit le rôle Vainqueur.
 
 ---
 

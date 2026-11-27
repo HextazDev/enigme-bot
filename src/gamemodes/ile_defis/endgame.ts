@@ -17,9 +17,10 @@ export const endgame: SeasonEnd<Summary> = {
     }) };
   },
   async close(players, plateau): Promise<Summary> {
+    const activePlayers = players.filter(p => !p.est_fantome);
     return {
       dragonWinners: boardData(plateau).gagnants_dragon,
-      leaders: [...players].sort((a, b) => b.position - a.position).slice(0, 3).map(p => ({ discord_id: p.discord_id, position: p.position })),
+      leaders: [...activePlayers].sort((a, b) => b.position - a.position).slice(0, 3).map(p => ({ discord_id: p.discord_id, position: p.position })),
     };
   },
   async announce(client: Client, raw: unknown, playerCount: number) {

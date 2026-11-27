@@ -23,11 +23,12 @@ Ce document consigne l'ensemble des **cas limites**, **invariants de sécurité*
 | **CRON-08** | `applyGhostRules` | Troisième tour consécutif sans jouer. | Le joueur devient fantôme et est annoncé ; les oublieurs du jour sont listés. | `test/season_services.test.js` |
 | **CRON-09** | `handle15hReminder` | Rappel de 15h hors saison active. | Aucun MP. | `test/cron_lifecycle.test.js` |
 | **CRON-10** | Paris / Marché Noir | Samedi/dimanche en mode sans boutique (`ile_defis`) ou saison terminée. | Rien ne s'ouvre. | `test/cron_lifecycle.test.js` |
-| **CRON-11** | `endSeason` | Fin de saison Mario Party. | Étoiles bonus (catégories tirées comme avant, voir PARITY-06), statut `season_ended`, joueurs bloqués et choix en attente effacés **dans une transaction**, puis annonce. | `test/season_services.test.js`, `test/legacy_endgame_parity.test.js` |
+| **CRON-11** | `endSeason` | Fin de saison Mario Party. | Étoiles bonus (catégories tirées comme avant, voir PARITY-06 ; éligibilité voir END-01), statut `season_ended`, joueurs bloqués et choix en attente effacés **dans une transaction**, puis annonces séquentielles hors verrou. | `test/season_services.test.js`, `test/season_end.test.js`, `test/legacy_endgame_parity.test.js` |
 | **CRON-12** | `dailyTransition` | Un joueur a vaincu le Dragon sur l'île. | La saison se clôture au 17h suivant (annonce des vainqueurs). ⚠️ Nouveau : l'ancien code enregistrait la victoire sans jamais clore la saison (voir PARITY-07). | `test/season_services.test.js` |
 | **CRON-13** | Marché Noir | Ouverture du dimanche, ou double déclenchement le même jour Paris. | Seuls les non-fantômes regagnent le droit de jouer ; idempotent par date Paris (`mode_data.marche_noir_date`). | `test/season_services.test.js` |
 | **CRON-14** | `publishHint` | Publication d'indice (18h, 19h, 20h) et échec réseau Discord. | Le verrou est relâché avant l'envoi Discord (`claimHint` → `afterGameAction`) ; en cas d'échec d'envoi, `unclaimHint` réarme l'indice pour un nouvel essai. | `test/cron_lifecycle.test.js` |
 | **CRON-15** | `handle17hTransition` | 17h sans énigme atteignant le dernier tour (`tour >= maxTours`). | Clôture immédiate de la saison sans annoncer que le plateau reste ouvert. | `test/cron_lifecycle.test.js` |
+| **END-01** | `endgame` (`mario_party` & `ile_defis`, #13) | Fantômes, joueurs inertes à `0` (Paresseux), ex-æquo actifs, saison 100 % fantômes, rythme d'annonce, erreur Discord partielle et arrêt gracieux. | Fantômes (`est_fantome: true`) exclus des étoiles bonus, du podium/classement final et du rôle Vainqueur ; score `> 0` requis sur toutes les catégories (y compris `stat_cases_avancees > 0` pour le Paresseux) ; ex-æquo actifs partagent l'étoile ; saison 100 % fantômes clôturée en un message sans cérémonie ni pause ; révélation séquentielle (2,5 s) hors verrou et hors file ordonnée (`ordered: false`), isolée contre les erreurs d'envoi intermédiaires et purgée immédiatement sur `shutdown` (`flushEndgameDelays`). | `test/season_end.test.js` |
 | **BET-01** | Paris du samedi | Redémarrage entre 10h et 21h, double ouverture, double règlement, double pari. | L'ouverture est persistée et idempotente (`plateau.mode_data.paris_ouverts`) sans écraser les paris en cours ; un seul pari par joueur ; le règlement est transactionnel et ne paie qu'une fois. | `test/season_services.test.js` |
 
 ---
@@ -65,7 +66,7 @@ Ce document consigne l'ensemble des **cas limites**, **invariants de sécurité*
 | **DB-05** | `migrate` | Base neuve, historique, `004-complete-snapshots` ou schéma plus récent incompatible. | Création/adoption idempotente (`PRAGMA busy_timeout` + `WAL` sur fichier), refus sans modification si version inconnue. | `test/migrations.test.js` |
 | **DB-06** | `backupDatabase` | Sauvegarde vers un fichier existant. | Refus d'écraser ; copie vérifiée. | `test/backup.test.js` |
 | **DB-07** | `startTurn` | Échec pendant l'atterrissage. | Tout le tour (snapshot, lancer, déplacement, effets) est annulé. | `test/mario_turn.test.js`, `test/ile_turn.test.js` |
-| **SEC-01** | `finishEnigma` & `startTurn` | Fantôme à 21h ou tentant de lancer. | Seuls les non-fantômes sont débloqués ; un fantôme ne peut pas lancer. | `test/ghost_security_and_plateau_defaults.test.js` |
+| **SEC-01** | `finishEnigma`, `startTurn` & `endgame` | Fantôme à 21h, tentant de lancer ou en fin de saison. | Seuls les non-fantômes sont débloqués ; un fantôme ne peut pas lancer ; aucun fantôme ne reçoit d'étoile bonus ni de place au podium (END-01). | `test/ghost_security_and_plateau_defaults.test.js`, `test/season_end.test.js` |
 | **DATA-01** | Modèle `Plateau` | Création. | `tour = 0`, `enigme_status = 'season_ended'`. | `test/ghost_security_and_plateau_defaults.test.js` |
 
 ---
@@ -157,5 +158,5 @@ Critère de la migration TypeScript : **à état initial et tirages identiques, 
 | **PARITY-06** | Étoiles bonus | Écart corrigé : catégories tirées par `sort(() => 0.5 - random())` (mélange non uniforme, conservé tel quel). | Tirage historique restauré. | `test/legacy_endgame_parity.test.js` |
 | **PARITY-07** | Dragon (île) | Changement de règle assumé : l'ancien code annonçait la fin « gérée en fin de tour » sans l'implémenter, la saison continuait jusqu'au tour 30. | Clôture au 17h suivant la première victoire (CRON-12). Validé (10/10/2026). | `test/season_services.test.js` |
 
-Les autres corrections volontaires sont signalées dans leurs sections par « auparavant » : SEC-01, PEND-01 à PEND-09, ILE-01 à ILE-08, INV-03, ENIG-02, ENIG-05, CRON-13 à CRON-15, BOARD-02, GAME-01, ADM-03, ADM-05.
+Les autres corrections volontaires sont signalées dans leurs sections par « auparavant » : SEC-01, END-01, PEND-01 à PEND-09, ILE-01 à ILE-08, INV-03, ENIG-02, ENIG-05, CRON-13 à CRON-15, BOARD-02, GAME-01, ADM-03, ADM-05.
 
