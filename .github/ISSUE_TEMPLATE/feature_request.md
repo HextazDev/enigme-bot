@@ -17,29 +17,30 @@ assignees: ""
   3. L'effet appliqué est...
 
 ## 🛠️ Spécifications Techniques (Grounding Codebase)
-- **Base de Données (`src/db/models.js`)** : <!-- Colonnes Sequelize à ajouter/modifier sur Joueur, Plateau ou TourSnapshot -->
-- **Logique Métier (`src/game/` ou `src/gamemodes/`)** : <!-- Algorithme, probabilités, coût en pièces, effets -->
-- **Interactions Discord (`src/commands/` ou `src/index.js`)** : <!-- Commandes slash, customId des boutons, modales, flags ephemeral -->
-- **Rendu Visuel (`src/utils/canvas.js`)** : <!-- Nouvelles icônes, coordonnées, impact sur l'image du plateau -->
+- **Base de Données (`src/db/models.ts`, `src/db/migrations.ts`)** : <!-- Colonnes Sequelize et migration versionnée à ajouter sur Joueur, Plateau ou TourSnapshot -->
+- **Logique Métier (`src/gamemodes/`, `src/services/`, `src/game/`)** : <!-- Règles pures, coûts, probabilités, horloge gameNow() -->
+- **Interactions Discord (`src/commands/`, `src/discord/`, `src/gamemodes/*/discord.ts`)** : <!-- Commandes slash, customId, modales (opensModal), MessageFlags.Ephemeral -->
+- **Rendu Visuel (`src/utils/canvas.ts`)** : <!-- Nouvelles icônes, coordonnées, impact sur l'image du plateau -->
 
 ## 📂 Fichiers Cibles Identifiés
-- `src/db/models.js`
-- `src/game/...`
+- `src/db/models.ts` / `src/db/migrations.ts`
 - `src/gamemodes/...`
-- `src/commands/...`
-- `src/utils/canvas.js`
+- `src/services/...` / `src/game/...`
+- `src/commands/...` / `src/discord/...`
+- `src/utils/canvas.ts`
+- `test/...`
+- `docs/EDGE_CASES.md`
 
 ## ⚠️ Cas Limites, Concurrence & Sécurité
-- **Délai Discord 3s** : `deferReply()` ou `deferUpdate()` requis ?
-- **Verrous & Concurrence** : Protection par `lockUser()` / `unlockUser()` requise ?
-- **Cas limites de gameplay** : Solde insuffisant, inventaire plein (3 objets max), joueur inactif/fantôme, passages répétés sur la case.
-- **Sécurité** : Si commande d'administration, vérification stricte du `MJ_USER_ID` et permissions Discord.
+- **Frontière Discord (`src/discord/interaction.ts`)** : Modale à déclarer dans `opensModal` ? Action MJ dans `isPrivileged` ?
+- **Verrous & Transactions** : Écriture hors interaction nécessitant `withScheduledLock` ? Mutations liées dans `sequelize.transaction` ?
+- **Cas limites de gameplay** : Solde insuffisant, inventaire plein (3 objets max), joueur inactif/fantôme, boutons périmés (`STALE`), redémarrage.
+- **Sécurité** : Si commande d'administration, restriction stricte à `config.mjUserId`.
 
 ## ✅ Critères d'Acceptation (Definition of Done)
-- [ ] La mécanique fonctionne comme décrit sans erreur d'interaction Discord (zéro code 10062)
-- [ ] Les verrous utilisateur sont acquis et libérés systématiquement dans un bloc `finally`
-- [ ] Les modifications en base de données sont persistées correctement et rollbackées en cas d'erreur
-- [ ] Le cas limite est consigné dans `docs/EDGE_CASES.md` et validé par un test automatisé (`npm test`)
+- [ ] La mécanique fonctionne comme décrit sans erreur d'interaction Discord (zéro code `10062` / `40060`)
+- [ ] Les verrous (`withGameLock` / `withScheduledLock`) et transactions SQLite sont respectés
+- [ ] Les cas limites sont consignés dans `docs/EDGE_CASES.md` et validés par des tests (`npm run check` au vert)
 
 ---
 

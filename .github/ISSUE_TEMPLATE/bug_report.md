@@ -28,7 +28,7 @@ assignees: ""
 
 ## 🛡️ Cas Limites & Concurrence
 - [ ] Code d'erreur Discord identifié (ex: `10062 Unknown interaction`, permissions manquantes)
-- [ ] Conflit de verrou suspecté (`lockUser` orphelin ou timeout de 120s dépassé)
+- [ ] Conflit de verrou suspecté (`withGameLock` / `withScheduledLock`, `GameBusyError`)
 - [ ] Cas déjà répertorié dans [docs/EDGE_CASES.md](docs/EDGE_CASES.md) ? Si oui, indiquer l'ID (ex: `DISC-01`, `LOCK-02`).
 
 ---

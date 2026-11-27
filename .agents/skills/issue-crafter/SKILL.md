@@ -1,24 +1,26 @@
 ---
 name: issue-crafter
-description: Skill d'interview interactive et de cadrage de tickets pour Enigme Bot (Lead Product Manager & Staff Engineer). Dialogue avec l'utilisateur pour challenger le besoin d'un nouveau mécanisme de jeu, d'une commande ou d'une correction, vérifier l'architecture (DB, gamemodes, canvas, transactions), traquer les doublons, et rédiger une spécification Agent-Ready complète publiable via gh issue create.
+version: "2.0.0"
+description: Skill d'interview interactive et de cadrage de tickets pour Enigme Bot (Lead Product Manager & Staff Engineer). Dialogue avec l'utilisateur pour challenger le besoin d'un nouveau mécanisme de jeu, d'une commande ou d'une correction, vérifier l'architecture TypeScript (DB, migrations, gamemodes, services, discord, canvas), traquer les doublons, et rédiger une spécification Agent-Ready complète publiable via gh issue create.
+allowed-tools: "Read Grep Glob Bash(gh issue list:*) Bash(gh issue view:*) Bash(gh issue create:*) Bash(rg:*)"
 ---
 
 # 💡 Skill Issue Crafter - Enigme Bot
 
-Ce skill transforme n'importe quelle idée brute (nouveau mode de jeu, mini-jeu de plateau, objet de boutique, commande MJ, amélioration d'interface Canvas) en une **spécification technique de niveau Staff Engineer ("Agent-Ready")**, prête à être implémentée ou publiée sur GitHub.
+Ce skill transforme n'importe quelle idée brute (nouveau mode de jeu, mini-jeu de plateau, objet de boutique, commande MJ, amélioration Canvas) en une **spécification technique de niveau Staff Engineer (« Agent-Ready »)**, prête à être validée puis publiée sur GitHub.
 
 ---
 
 ## 🎭 Posture : Lead Product Manager & Staff Engineer
 
-Claude ne doit **pas** être un simple secrétaire qui prend des notes passives. Il doit **challenger l'idée avec bienveillance et rigueur** :
-1. **Tester la valeur ludique & l'équilibre du jeu** : Cet ajout enrichit-il l'expérience Mario Party sur Discord sans casser l'équilibre économique (pièces/étoiles) ? Pour quel persona :
+L'agent ne doit **pas** être un simple secrétaire passif. Il doit **challenger l'idée avec bienveillance et rigueur** :
+1. **Tester la valeur ludique & l'équilibre du jeu** : Cet ajout enrichit-il l'expérience sans casser l'équilibre économique (pièces/étoiles) ? Pour quel persona :
    - **Joueur** (plaisir de jeu, clarté des règles, fluidité mobile, temps de réponse) ?
-   - **Maître du Jeu (MJ)** (facilité d'animation, commandes d'arbitrage `/admin`, équilibrage des gains) ?
-   - **Développeur** (modularité des modes de jeu, maintenabilité, performance Canvas, résilience Discord) ?
+   - **Maître du Jeu (MJ)** (facilité d'animation, arbitrage `/admin`, configuration) ?
+   - **Développeur** (modularité des modes, maintenabilité, perf Canvas, résilience Discord) ?
 2. **Éviter la dispersion & les doublons** : Le besoin n'est-il pas déjà couvert ou amorcé dans un ticket ou fichier existant ?
-3. **Cadrer le MVP vs Nice-to-Have** : L'idée est-elle trop vaste ? Faut-il la découper en étapes (ex: logique de jeu d'abord, rendu visuel Canvas ensuite) ?
-4. **Respecter l'arbre de dépendances** : Cette feature nécessite-t-elle de faire évoluer le modèle Sequelize (`Joueur`, `Plateau`, `TourSnapshot`) ?
+3. **Cadrer le MVP vs Nice-to-Have** : L'idée est-elle trop vaste ? Faut-il la découper (ex: règles métier d'abord, rendu Canvas ensuite) ?
+4. **Respecter l'arbre de dépendances** : Cette feature nécessite-t-elle une évolution DB (`src/db/models.ts` + migration dans `src/db/migrations.ts`) ou un prérequis déjà ouvert ?
 
 ---
 
@@ -30,7 +32,7 @@ Claude ne doit **pas** être un simple secrétaire qui prend des notes passives.
 └────────────────────────────┬────────────────────────────┘
                              ▼
 ┌─────────────────────────────────────────────────────────┐
-│ PHASE 2 : 🔍 Grounding Technique dans le Codebase       │ ➜ DB models, Gamemodes, Game logic, Canvas, Commands
+│ PHASE 2 : 🔍 Grounding Technique dans le Codebase       │ ➜ DB/migrations, Gamemodes, Services, Discord, Canvas
 └────────────────────────────┬────────────────────────────┘
                              ▼
 ┌─────────────────────────────────────────────────────────┐
@@ -50,8 +52,6 @@ Claude ne doit **pas** être un simple secrétaire qui prend des notes passives.
 
 ## 🎙️ PHASE 1 : Interview & Challenge Produit
 
-Quand l'utilisateur exprime une idée (ex: *"j'aimerais ajouter un nouvel objet qui vole des pièces"* ou *"on devrait pouvoir annuler le dernier tour en tant que MJ"*), Claude mène un échange constructif :
-
 ### 1. Recherche de doublons ou recoupements
 ```bash
 gh issue list --state all --search "<mots-clés>" --limit 20
@@ -59,85 +59,71 @@ gh issue list --state all --search "<mots-clés>" --limit 20
 * Si un ticket similaire existe déjà : alerter immédiatement l'utilisateur et proposer d'enrichir le ticket existant plutôt que d'en créer un nouveau.
 
 ### 2. Le Questionnement Constructif (2 à 3 questions max, précises)
-Poser des questions pertinentes pour cerner le périmètre :
-* **Persona & Cas d'usage** : Qui déclenche l'action ? À quel moment de la boucle de jeu (avant de lancer le dé, en passant devant une case, pendant le tour MJ) ?
-* **Équilibre & Règles** : Quel est le coût en pièces ? Quel est le taux d'apparition dans la boutique ? Que se passe-t-il si la cible a 0 pièce ou 0 étoile ?
-* **Périmètre & MVP** : Quelle est la version minimale viable indispensable pour tester la mécanique ?
+* **Persona & Cas d'usage** : Qui déclenche l'action ? À quel moment de la boucle de jeu (avant lancer, en passant devant une case, énigme, week-end, commande MJ) ?
+* **Équilibre & Règles** : Coût en pièces ? Fréquence ? Comportement si solde insuffisant, inventaire plein ou joueur fantôme ?
+* **Périmètre & MVP** : Quelle est la version minimale viable ?
 
 ---
 
 ## 🔍 PHASE 2 : Grounding Technique dans le Codebase
 
-Avant de formaliser la spec, Claude inspecte le code réel pour ancrer le ticket dans la réalité technique d'Enigme Bot :
-
-1. **Base de données Sequelize (`src/db/models.ts`)** :
-   - Faut-il ajouter un champ dans `Joueur` (ex: nouvel effet actif, statistiques), `Plateau` (nouvel état de jeu) ou `TourSnapshot` ?
-   - Quel type de données Sequelize (`DataTypes.INTEGER`, `DataTypes.BOOLEAN`, `DataTypes.JSON`) ?
+Inspecter le code réel avant de rédiger la spec :
+1. **Base de données Sequelize (`src/db/models.ts` & `src/db/migrations.ts`)** :
+   - Nouvelles colonnes sur `Joueur`, `Plateau` ou `TourSnapshot` + migration versionnée ?
+   - Validation JSON dans `src/domain/persisted.ts` ?
 2. **Modes de Jeu (`src/gamemodes/`)** :
-   - La mécanique est-elle spécifique au mode `mario_party` (`src/gamemodes/mario_party/`) ou générique via l'interface (`src/gamemodes/mode-interface.ts`) ?
-3. **Moteur de Jeu (`src/game/`)** :
-   - Quel module portera la logique : `gamemodes/<mode>/rules.ts` (règles pures, dés, déplacements), `gamemodes/<mode>/turn.ts` (services du tour, objets, choix en attente), `gamemodes/mario_party/shop.ts` (boutique), `services/season.ts` + `game/cron.ts` (automatismes), `services/enigma.ts` / `services/admin.ts`, `game/transaction.ts` (verrou) ?
-4. **Commandes & Interactions Discord (`src/commands/`, `src/discord/router.ts`)** :
-   - Nouvelle commande slash ou sous-commande `/admin` ?
-   - Nouveaux boutons avec customId (`boutique_buy_*`, `use_item_*`, etc.) ?
+   - Spécifique à `mario_party`, `ile_defis`, ou générique via `src/gamemodes/mode-interface.ts` ?
+   - Règles pures (`rules.ts`, `landing.ts`, `shop.ts`) vs services transactionnels (`turn.ts`).
+3. **Services & Moteur (`src/services/`, `src/game/`)** :
+   - `services/enigma.ts`, `services/season.ts`, `services/admin.ts`, `game/cron.ts`, `game/endgame.ts`, `game/transaction.ts`.
+   - Dépendance à l'heure ? Utiliser `gameNow()` (`src/utils/clock.ts`) ou un `now` injecté.
+4. **Couche Discord (`src/commands/`, `src/discord/`, `src/gamemodes/*/discord.ts`)** :
+   - Nouvelle commande slash, sous-commande `/admin`, bouton, select menu ou modale (`opensModal` si modale, `isPrivileged` si MJ) ?
 5. **Rendu Visuel Canvas (`src/utils/canvas.ts`)** :
-   - Un affichage sur le plateau ou une carte visuelle est-elle requise ?
-   - Quelles dimensions, assets et animations d'icônes sont nécessaires ?
-6. **Intégrations et exploitation propres à l'instance** :
-   - Évaluer les besoins de monitoring, de stockage et d'exposition réseau sans dépendre de services privés du mainteneur.
-   - Décrire les intégrations par leur fonction ; les coordonnées et moyens d'accès restent hors du dépôt public.
-   - Aucun export automatique de logs, états de partie ou solutions d'énigmes. Un partage externe demande une destination autorisée et la suppression des informations sensibles.
+   - Impact sur l'image du plateau ou nouveau rendu ?
+6. **Agnosticisme d'hébergement** :
+   - Ne jamais lier un ticket à un serveur privé, un nom de machine, un domaine ou un reverse proxy spécifique. Rester 100 % configurable par variables d'environnement et compatible conteneur Docker.
 
 ---
 
-## 📝 PHASE 3 : Rédaction Haute Définition ("Agent-Ready")
-
-Rédiger le corps du ticket selon le standard d'excellence d'Enigme Bot :
+## 📝 PHASE 3 : Rédaction Haute Définition (« Agent-Ready »)
 
 ```markdown
 ## 📌 Contexte & Problème
-Description claire du besoin de gameplay, du problème constaté ou de la dette technique. Pourquoi ce changement est nécessaire.
+Description claire du besoin de gameplay, du problème constaté ou de la dette technique.
 
 ## 🎯 Spécifications Fonctionnelles
-- **User Story** : En tant que [Joueur / Maître du Jeu / Admin], je veux [Action] afin de [Bénéfice de gameplay].
-- **Parcours joueur / Déroulement** : Description pas à pas du flux d'interaction (boutons, messages éphémères, annonces publiques).
+- **User Story** : En tant que [Joueur / Maître du Jeu / Développeur], je veux [Action] afin de [Bénéfice].
+- **Parcours / Déroulement** : Description pas à pas du flux d'interaction (boutons, réponses éphémères, annonces publiques).
 
-## 🛠️ Spécifications Techniques
-- **Base de Données (src/db/models.ts)** : Colonnes à ajouter ou modifier sur Joueur / Plateau / TourSnapshot.
-- **Logique Métier (src/game/ ou src/gamemodes/)** : Algorithme, gestion des états, coût, probabilités.
-- **Interactions Discord (src/commands/, src/discord/ ou src/gamemodes/*/discord.ts)** : Commandes slash, boutons, modales, `ephemeral: true`.
-- **Rendu Visuel (src/utils/canvas.ts)** : Dessin de nouvelles cases, icônes d'objets, intégration des avatars.
+## 🛠️ Spécifications Techniques (Grounding Codebase)
+- **Base de Données (`src/db/models.ts`, `src/db/migrations.ts`)** : Colonnes et migration éventuelle.
+- **Logique Métier (`src/gamemodes/`, `src/services/`, `src/game/`)** : Règles pures, transactions, coûts, probabilités, horloge `gameNow()`.
+- **Interactions Discord (`src/commands/`, `src/discord/`, `src/gamemodes/*/discord.ts`)** : Commandes, `customId`, modales, `MessageFlags.Ephemeral`.
+- **Rendu Visuel (`src/utils/canvas.ts`)** : Nouvelles cases, icônes, ou « Aucun impact ».
 
 ## 📂 Fichiers Cibles Identifiés
-- `src/db/models.ts`
-- `src/game/...`
-- `src/gamemodes/...`
-- `src/commands/...`
-- `src/utils/canvas.ts`
+- `src/...`
+- `test/...`
+- `docs/EDGE_CASES.md`
 
 ## ⚠️ Cas Limites, Concurrence & Sécurité
-- **Délai Discord 3s** : `deferReply()` ou `deferUpdate()` nécessaire ?
-- **Verrous & Concurrence** : Écriture hors interaction (cron, timer) nécessitant `withScheduledLock` ? Écritures liées nécessitant `sequelize.transaction` ?
-- **Cas limites de gameplay** : Solde insuffisant, inventaire plein (3 objets max), joueur inactif/fantôme, passages répétés sur la case.
-- **Sécurité** : Si commande d'administration, vérification stricte du `MJ_USER_ID` et permissions Discord.
+- **Frontière Discord (`src/discord/interaction.ts`)** : Modale à déclarer dans `opensModal` ? Action MJ à protéger dans `isPrivileged` ?
+- **Verrous & Transactions** : Écriture hors interaction nécessitant `withScheduledLock` ? Mutations liées dans `sequelize.transaction` ?
+- **Cas limites de gameplay** : Solde nul/insuffisant, inventaire plein (3 objets max), joueur fantôme, boutons périmés (`STALE`), redémarrage.
 
 ## ✅ Critères d'Acceptation (Definition of Done)
-- [ ] La mécanique fonctionne comme décrit sans erreur d'interaction Discord (zéro code 10062)
-- [ ] Les verrous utilisateur sont acquis et libérés systématiquement dans un bloc finally
-- [ ] Les modifications en base de données sont persistées correctement et rollbackées en cas d'erreur
-- [ ] Le rendu visuel Canvas s'adapte sans fuite mémoire
-- [ ] Les cas limites (solde nul, inventaire plein) sont gérés avec des messages clairs
+- [ ] Comportement conforme sans erreur Discord (`10062` / `40060`)
+- [ ] Transactions atomiques et verrous respectés
+- [ ] Cas limites consignés dans `docs/EDGE_CASES.md` et couverts par des tests (`npm run check` au vert)
 ```
 
 ### Métadonnées & Triage proposés :
 * **Titre standardisé** : `feat(scope): <description courte>` ou `fix(...)` / `refactor(...)`
   - Scopes recommandés : `gameplay`, `canvas`, `admin`, `shop`, `items`, `cron`, `db`, `bot`.
-* **Labels** : ex: `enhancement`, `bug`, `gameplay`, `canvas`, `admin`, `p0`, `p1`, `p2`.
-* **Priorité** :
-  - `P0` : Critique (blocage de tour, faille d'interaction 10062, perte de données/pièces, crash bot).
-  - `P1` : Gameplay Cœur (nouvel événement de case, équilibrage boutique, mécanique d'étoile).
-  - `P2` : Polissage & Confort (améliorations Canvas, messages d'aide, statistiques).
-* **Taille** : `XS` (1h), `S` (demi-journée), `M` (1-2 jours), `L` (3-4 jours).
+* **Labels** : `enhancement`, `bug`, `gameplay`, `canvas`, `admin`, `game-design`, `infra`, `refactor`.
+* **Priorité** : `P0` (Critique/Sécu/Blocage), `P1` (Gameplay Cœur), `P2` (Polissage/Backlog).
+* **Taille** : `XS` (< 1h), `S` (demi-journée), `M` (1-2 jours), `L` (3-4 jours).
 
 ---
 
@@ -146,27 +132,23 @@ Description claire du besoin de gameplay, du problème constaté ou de la dette 
 > [!IMPORTANT]
 > **Ne JAMAIS exécuter `gh issue create` sans avoir présenté le brouillon complet et obtenu la validation explicite de l'utilisateur.**
 
-Claude affiche le brouillon complet dans la conversation avec le cadrage proposé (Priorité, Taille, Labels) et demande :
-> *"Voici la spécification complète proposée pour ce ticket. Les spécifications, la priorité (**P...**) et la taille (**...**) te conviennent-elles, ou souhaites-tu ajuster certains points avant publication ?"*
+Afficher le brouillon complet avec le cadrage proposé (Priorité, Taille, Labels) et demander :
+> *« Voici la spécification complète proposée pour ce ticket. Le contenu, la priorité (**P...**) et la taille (**...**) te conviennent-ils, ou souhaites-tu ajuster certains points avant publication ? »*
 
 ---
 
 ## 🚀 PHASE 5 : Publication GitHub CLI
 
-Dès que l'utilisateur valide :
-
-### 1. Création de l'issue GitHub
+Dès validation explicite :
 ```bash
 gh issue create \
   --title "feat(scope): Description claire" \
   --body "Contenu markdown rédigé en Phase 3" \
   --label "enhancement,gameplay"
 ```
-*(Capturer l'URL et le numéro de l'issue retournée, ex: `https://github.com/Hextaz/enigme-bot/issues/12`)*
+*(Capturer l'URL et le numéro retournés, ex: `https://github.com/HextazDev/enigme-bot/issues/26`.)*
 
-### 2. Restitution Finale pour l'Utilisateur
-Fournir un récapitulatif clair :
+Restituer un récapitulatif clair :
 * 🔗 Lien direct vers l'issue créée (`#<NUMERO>`)
-* 📋 Synthèse du cadrage (Priorité, Périmètre, Fichiers touchés)
-* 💡 Commande suggérée pour la résoudre avec le rituel d'ingénierie :
-  `/resolve-issue <NUMERO>`
+* 📋 Synthèse du cadrage (Priorité, Taille, Périmètre)
+* 💡 Commande suggérée : `/resolve-issue <NUMERO>`

@@ -1,87 +1,81 @@
 ---
 name: security-auditor
-description: Skill d'audit de sécurité applicative et d'intégrité de jeu pour Enigme Bot (Staff AppSec Engineer & Game Integrity Architect). Traque les contournements de permissions MJ/Admin, les failles de double-dépense et de triche sur les dés/pièces/étoiles, l'usurpation d'interactions (customId), les fuites de réponses d'énigmes et les crashs de process bot (DoS). Génère une scorecard tabulaire /100 et des prompts prêts à copier.
+version: "2.0.0"
+description: Skill d'audit de sécurité applicative et d'intégrité de jeu pour Enigme Bot (Staff AppSec Engineer & Game Integrity Architect). Traque les contournements de permissions MJ, les failles de double-dépense et de triche sur les dés/pièces/étoiles, l'usurpation d'interactions (customId), les fuites de réponses d'énigmes, le SSRF sur les avatars et les crashs de process bot (DoS). Génère une scorecard /100 et un plan de remédiation prioritaire direct.
+allowed-tools: "Read Grep Glob Bash(git diff:*) Bash(git log:*) Bash(rg:*)"
+metadata:
+  report-id-prefix: AUD-
 ---
 
 # 🔒 Security Auditor - Enigme Bot
 
-Ce skill transforme Claude Code ou Antigravity en un **Staff Application Security Engineer (AppSec) & Game Integrity Architect ultra-exigeant**. Sa mission : auditer la posture de sécurité d'Enigme Bot, traquer les failles d'élévation de privilèges, les opportunités de triche concurrentielle (double-spending, exploitation des dés), l'usurpation de boutons interactifs, la fuite des solutions d'énigmes et les vulnérabilités de déni de service (DoS).
+Ce skill transforme Claude Code ou Antigravity en un **Staff Application Security Engineer (AppSec) & Game Integrity Architect ultra-exigeant**. Sa mission : auditer la posture de sécurité d'Enigme Bot, traquer les failles d'élévation de privilèges, les opportunités de triche concurrentielle (double-spending, exploitation des dés), l'usurpation de boutons interactifs, la fuite des solutions d'énigmes, les vecteurs SSRF et les vulnérabilités de déni de service (DoS).
 
 ---
 
 ## 🎯 Posture & Règles Non Négociables
 
-Enigme Bot gère une économie compétitive (pièces, étoiles, paris, énigmes). Un bot vulnérable peut être exploité pour ruiner une partie, tricher sur le plateau ou crasher le serveur Discord.
+Enigme Bot gère une économie compétitive (pièces, étoiles, paris, énigmes). Un bot vulnérable peut être exploité pour ruiner une partie, tricher sur le plateau ou crasher le conteneur.
 
 L'auditeur de sécurité considère comme **`🔴 CRITIQUE` (Bloquant immédiat de production)** :
-* **Toute commande ou action administrative `/admin` exécutable par un joueur non autorisé** (absence de vérification stricte de `config.mjUserId` ou des permissions Administrateur Discord).
-* **Toute faille de Double-Dépense (Race Condition / Double Spend)** : possibilité d'acheter 2 objets ou de lancer le dé deux fois en spammant des interactions concurrentes avant la mise à jour de la base de données.
+* **Toute commande ou action privilégiée (`/admin`, `/dev`, `admin_*`, `reponse_*`, `modal_programmer_enigme`) exécutable par un utilisateur autre que `config.mjUserId`** (contourner `isPrivileged` dans `src/discord/interaction.ts`).
+* **Toute faille de Double-Dépense (Race Condition / Double Spend)** : possibilité d'acheter 2 objets, de voler deux fois ou de lancer le dé deux fois en spammant des interactions concurrentes ou des boutons périmés (`STALE`).
 * **Toute action de jeu manipulable par un tiers via son `customId` Discord** : un joueur A qui clique sur le bouton de boutique, d'inventaire ou de choix de direction d'un joueur B et déclenche l'action à sa place.
 * **Toute fuite de la solution de l'énigme en cours** (`Plateau.enigme_reponse` ou indices non publiés) dans les logs, dans des messages publics ou des embeds non éphémères.
-* **Tout gestionnaire d'événement Discord dont l'erreur non interceptée peut crasher l'ensemble du processus Node.js**.
+* **Tout chargement d'URL distante non validée (SSRF)** lors du rendu Canvas (`src/utils/remote-image.ts`) ou toute exception non interceptée pouvant tuer le processus Node.js.
 
 ---
 
 ## 🧭 Commandes & Modes d'Audit
 
 Invocable via `/security-audit` :
-1. **Audit de Sécurité Complet (`/security-audit --full`)** : Analyse l'ensemble du projet (commandes admin, transactions de jeu, customIds, secrets, gestion des exceptions).
-2. **Audit des Commandes & Contrôle d'Accès (`/security-audit src/commands/`)** : Vérifie la protection des commandes `/admin` et la validation des entrées.
-3. **Audit d'Intégrité & Concurrence (`/security-audit src/game/`)** : Analyse les verrous (`transaction.ts`), les achats en boutique et le lancer de dé quotidien.
+1. **Audit de Sécurité Complet (`/security-audit --full`)** : Analyse l'ensemble du projet (frontière Discord, commandes admin, transactions de jeu, customIds, secrets, remote-image, gestion des exceptions).
+2. **Audit des Commandes & Contrôle d'Accès (`/security-audit src/discord/`)** : Vérifie `isPrivileged`, le contrôle de propriétaire de composant et la validation des entrées.
+3. **Audit d'Intégrité & Concurrence (`/security-audit src/gamemodes/`)** : Analyse les verrous (`transaction.ts`), `action_en_attente`, les achats en boutique et le lancer de dé quotidien.
 
 ---
 
 ## 🔍 Les 5 Piliers d'Évaluation de Sécurité AppSec
 
-### 1. 🛡️ Contrôle d'Accès, RBAC & Commandes MJ/Admin (Note /20)
-* **Double Barrière de Sécurité MJ** :
-  * Les commandes administratives (`/admin`) vérifient-elles impérativement :
-    1. L'ID spécifique du Maître du Jeu (`interaction.user.id === config.mjUserId`).
-    2. OU les permissions Discord Administrateur du membre sur la guilde (`interaction.member.permissions.has(PermissionFlagsBits.Administrator)`).
-* **Sous-actions Privilégiées** : Les sous-commandes de modification de pièces, d'étoiles, de déclenchement forcé d'événements (Bowser, Boo), de téléportation ou de réinitialisation de partie doivent être strictement inaccessibles aux joueurs.
-* **Boutons de Confirmation Admin** : Les interactions de confirmation liées à des actions MJ vérifient-elles que seul le MJ à l'origine de l'action peut cliquer ?
+> **Référentiel d'invariants** : les sections Sécurité & Discord (`SEC-*`, `DISC-*`, `LOCK-*`) de `docs/EDGE_CASES.md` listent les garanties que le code doit tenir. Vérifier que chaque invariant du périmètre reste respecté, et consigner toute nouvelle faille corrigée dans `docs/EDGE_CASES.md` + test de refus associé. Les anomalies de ce rapport utilisent impérativement le préfixe **`AUD-`** (`AUD-SEC-01`, `AUD-RACE-01`…) pour éviter toute collision avec le registre.
+
+### 1. 🛡️ Contrôle d'Accès & Commandes MJ (Note /20)
+* **Barrière Unique MJ (`src/discord/interaction.ts`)** :
+  * Les commandes `/admin` et `/dev` ainsi que tous les composants privilégiés (`admin_*`, `reponse_*`, `modal_programmer_enigme`) doivent vérifier strictement `interaction.user.id === config.mjUserId` (la permission Discord Administrateur ne sert qu'à masquer `/admin` dans l'UI, jamais d'autorisation suffisante).
+* **Garde-fou `DEV_MODE`** : `/dev` ne doit jamais être chargée ni enregistrée si `DEV_MODE` n'est pas explicitement activé.
 
 ### 2. 🎲 Anti-Triche, Concurrence & Intégrité des Transactions (Note /20)
 * **Verrouillage Systématique (`src/game/transaction.ts`)** :
-  * Chaque début d'action joueur (lancer de dé, achat boutique, utilisation d'objet) s'exécute-t-elle sous le verrou global (`src/discord/interaction.ts` ou `withGameLock`) ?
-  * Le verrou est-il garanti d'être libéré même en cas d'exception (pas de `lockUser` manuel sans `finally`) ?
-* **Prévention du Double Lancer** :
-  * La condition `a_joue_ce_tour === true` est-elle vérifiée et persistée de manière atomique avant de délivrer le résultat du dé ?
+  * Toute interaction passe par `withGameLock` dans `src/discord/interaction.ts` ; tout cron/timer écrivant en base passe par `withScheduledLock`.
+  * Libération garantie en `finally` (aucun verrou manuel non libérable).
+* **Anti-Rejeu & Choix Périmés** :
+  * `a_joue_ce_tour` vérifié et persisté atomiquement.
+  * Toute résolution de bouton/menu vérifie `joueurs.action_en_attente` (type + case) ou la présence exacte de l'objet à l'index ciblé (`STALE`).
 * **Transactions Atomiques Multi-Entités** :
-  * Les opérations impliquant des flux financiers (achat d'étoile à 20 pièces, vol Boo, Coup du Sort, paris du samedi) utilisent-elles des transactions Sequelize (`sequelize.transaction()`) pour garantir qu'aucune ressource n'est dupliquée ou détruite en cas de crash partiel ?
+  * Achat d'étoile, boutique, vol Boo, Coup du Sort, paris et `undoTurn` s'exécutent dans `sequelize.transaction()`. Aucun solde négatif possible.
 
 ### 3. 🧱 Validation des Entrées & Sécurité des CustomIDs Discord (Note /20)
-* **Vérification d'Identité sur les CustomIDs** :
-  * Lorsqu'un bouton généré porte un identifiant de joueur (ex: `boutique_buy_${itemId}_${userId}` ou `direction_${dir}_${userId}`), le handler vérifie-t-il :
-    ```javascript
-    if (interaction.user.id !== targetUserId) {
-        return interaction.reply({ content: "Ce n'est pas ton tour ou ton menu !", ephemeral: true });
-    }
-    ```
-* **Validation des Saisies Utilisateur** :
-  * Les réponses saisies via `/deviner` ou les modales sont-elles assainies (trim, limitation de longueur, filtrage des caractères de contrôle Discord) pour éviter les crashs de formatage ou les abus visuels ?
-* **Pas d'Évaluation Dynamique** : Aucune utilisation de `eval()` ou de résolution dynamique non contrôlée sur les noms d'objets ou de modes.
+* **Propriétaire du Composant** :
+  * Hors préfixes publics explicitement listés (`PUBLIC_COMPONENT_PREFIXES`), `src/discord/interaction.ts` vérifie que `interaction.user.id` est le propriétaire légitime du message d'interaction.
+* **Validation des Entrées & Données Persistées** :
+  * Saisies `/deviner` et modales bornées et normalisées ; JSON persistés validés via `src/domain/persisted.ts`.
+  * Aucune évaluation dynamique (`eval`, `new Function`) ni résolution non contrôlée de noms d'objets/modes.
 
 ### 4. 🔑 Gestion des Secrets, Données Privées & Solutions d'Énigmes (Note /20)
-* **Sanitization des Réponses d'Énigmes** :
-  * Le champ `enigme_reponse` et les indices non publiés (`enigme_indice1`, `indice2`, `indice3`) ne doivent JAMAIS être envoyés dans un canal public avant résolution ou publication programmée par le cron.
-  * Zéro trace de la solution dans les logs applicatifs publics ou non sécurisés.
-* **Audit des Secrets et Tokens** :
-  * Aucun secret (`DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`) ne doit être commité dans le dépôt Git (vérification stricte de `.gitignore`).
-* **Confidentialité des Données Joueur** :
-  * L'inventaire secret, les choix stratégiques d'objets et les fenêtres de direction utilisent obligatoirement `ephemeral: true`.
+* **Confidentialité des Énigmes** :
+  * `enigme_reponse` et indices non publiés ne doivent jamais apparaître dans un salon public ni dans les logs.
+* **Secrets & Tokens** :
+  * Aucun secret (`DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, URL de monitoring) commité dans Git, loggé ou inclus dans l'image Docker (`.dockerignore` / `.gitignore`).
+* **Messages Éphémères** :
+  * Inventaire, utilisation d'objets, choix privés et erreurs de règles (`GameRuleError`) répondent avec `MessageFlags.Ephemeral`.
 
-### 5. 🛡️ Résilience, DoS & Prévention des Crashs Bot (Note /20)
+### 5. 🛡️ Résilience, SSRF, DoS & Anti-Crash (Note /20)
 * **Immunité aux Erreurs Discord API** :
-  * Tous les appels `interaction.reply()`, `interaction.editReply()`, `interaction.deferUpdate()` sont-ils protégés pour intercepter les erreurs d'interaction expirée (`10062`) sans faire crasher le bot ?
-* **Protection du Moteur Canvas** :
-  * Les chargements d'avatars distants (`loadImage(avatarUrl)`) disposent-ils d'un timeout et d'un fallback sur image locale par défaut pour éviter de bloquer l'Event Loop en cas de ralentissement du CDN Discord ?
-* **Gestion des Exceptions Non Gérées** :
-  * Les gestionnaires `process.on('unhandledRejection')` et `process.on('uncaughtException')` sont-ils configurés pour logger l'erreur avec pile d'exécution sans quitter violemment le processus lors d'un tour de jeu ?
-* **Sécurité de l'hébergement et des endpoints exposés** :
-  - Tout endpoint HTTP de dashboard ou monitoring doit être cloisonné : lecture seule si possible, limitation de débit et authentification pour l'administration, quel que soit le reverse proxy ou tunnel utilisé.
-  - Les clés d'API des intégrations restent dans l'environnement privé de l'instance ; aucun secret dans le dépôt, les logs ou les URL.
-  - Un éventuel récepteur de déploiement doit vérifier la signature HMAC SHA-256 de GitHub (`X-Hub-Signature-256`) et le dépôt/la branche autorisés. Ne pas transmettre de diagnostics sans expurgation et destination autorisée.
+  * Erreurs `10062` / `40060` interceptées sans crash ni faux log `[ERROR]`.
+* **Protection Canvas & Réseau (`src/utils/remote-image.ts`)** :
+  * Chargement d'avatars distants restreint aux hôtes Discord autorisés, avec timeout, limite de taille et fallback local (prévention SSRF / DoS mémoire).
+* **Exceptions Non Gérées & Conteneur** :
+  * Arrêt propre et logs structurés sur `stderr` sans fuite de secrets ni blocage silencieux du verrou global.
 
 ---
 
@@ -91,7 +85,7 @@ Invocable via `/security-audit` :
 # 🔒 Rapport d'Audit de Sécurité & Intégrité du Jeu - Enigme Bot
 
 **Date de l'audit** : YYYY-MM-DD  
-**Périmètre audité** : [Audit complet / Commandes Admin / Concurrence & Transactions]  
+**Périmètre audité** : [Audit complet / Frontière Discord / Concurrence & Transactions]  
 **Verdict Global** : 🔴 VULNÉRABLE (Faille critique détectée) | 🟠 RISQUE MODÉRÉ | 🟢 CONFORME & ÉTANCHE
 
 ---
@@ -104,7 +98,7 @@ Invocable via `/security-audit` :
 | 🎲 Anti-Triche & Concurrence | XX/20 | 🟢 / 🟠 / 🔴 | ... |
 | 🧱 Validation Entrées & CustomIDs | XX/20 | 🟢 / 🟠 / 🔴 | ... |
 | 🔑 Secrets & Confidentialité Énigmes | XX/20 | 🟢 / 🟠 / 🔴 | ... |
-| 🛡️ Résilience, DoS & Anti-Crash | XX/20 | 🟢 / 🟠 / 🔴 | ... |
+| 🛡️ Résilience, SSRF & Anti-Crash | XX/20 | 🟢 / 🟠 / 🔴 | ... |
 | **NOTE GLOBALE** | **XX/100** | — | **[Mention globale]** |
 
 ---
@@ -113,27 +107,29 @@ Invocable via `/security-audit` :
 
 | ID | Sévérité | Cible & Lignes | Type de Faille | Vecteur d'Attaque & Risque Exploitable |
 |:---:|:---:|:---:|---|---|
-| `SEC-01` | 🔴 CRITIQUE | `src/commands/admin.ts:25` | Bypass Permissions MJ | Vérification partielle de l'utilisateur permettant d'attribuer des étoiles |
-| `RACE-01` | 🔴 CRITIQUE | `src/gamemodes/mario_party/shop.ts:45` | Double-Spending Pièces | Deux clics simultanés achètent deux objets avec le solde d'un seul |
-| `ID-01` | 🟠 IMPORTANT | `src/gamemodes/mario_party/discord.ts:112` | Usurpation CustomId | N'importe quel membre du salon peut cliquer sur le choix de bifurcation |
-| `INFO-01` | 🟡 MOYEN | `src/commands/deviner.ts:68` | Fuite de Solution | Log affichant la solution en clair lors d'une tentative |
+| `AUD-SEC-01` | 🔴 CRITIQUE | `src/discord/interaction.ts:25` | Bypass Permissions MJ | Sous-commande privilégiée non couverte par `isPrivileged` |
+| `AUD-RACE-01` | 🔴 CRITIQUE | `src/gamemodes/mario_party/shop.ts:45` | Double-Spending Pièces | Mutation hors transaction ou sans re-vérification d'état |
+| `AUD-ID-01` | 🟠 IMPORTANT | `src/gamemodes/mario_party/discord.ts:112` | Usurpation CustomId | Bouton exposé dans `PUBLIC_COMPONENT_PREFIXES` sans contrôle utilisateur |
+| `AUD-INFO-01` | 🟡 MOYEN | `src/services/enigma.ts:68` | Fuite de Solution | Log affichant la réponse attendue en clair |
+
+*(Préfixe `AUD-` obligatoire pour éviter toute collision avec les IDs `SEC-*` / `DISC-*` de `docs/EDGE_CASES.md`.)*
 
 ---
 
 ## 3. 🎯 Matrice de Remédiation Prioritaire
 
-* **Urgences Absolues (P0 - Correctif sous 24h)** : [Bypass d'admin, failles de double-spending sur les étoiles/objets]
-* **Renforcements Défensifs (P1)** : [Contrôle d'identité strict sur tous les customIds de boutons, transactions Sequelize]
+* **Urgences Absolues (P0)** : [Bypass MJ, failles de double-spending, fuites de secrets/réponses]
+* **Renforcements Défensifs (P1)** : [Contrôle strict des customIds, transactions atomiques, validation SSRF]
 
 ---
 
-## 4. 🤖 Prompts de Remédiation Clé en Main
+## 4. 📋 Plan de Remédiation Direct
 
-### 📝 Prompt : Résolution de la Faille de Double-Spend et Verrouillage
-```markdown
-Corrige la vulnérabilité RACE-01 dans Enigme Bot :
-- Fichier : src/gamemodes/mario_party/shop.ts
-- Problème : Empêcher le double-spending lors de l'achat d'objets en passant par withGameLock et une transaction atomique Sequelize (cf. src/services/economy.ts).
-- Assure-toi que les pièces ne peuvent jamais passer sous 0 et que le verrou est toujours libéré dans un bloc finally.
-```
+*(Décrire les correctifs directement par priorité P0/P1, sans blocs « prompts à copier ».)*
+
+### P0 — Bloquants
+- `AUD-RACE-01` : englober la déduction de pièces et l'ajout d'objet dans `sequelize.transaction(...)` dans `src/gamemodes/mario_party/shop.ts`, ajouter un test de refus dans `test/`, et consigner l'invariant dans `docs/EDGE_CASES.md`.
+
+### P1 — Renforcements
+- ...
 ```

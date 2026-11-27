@@ -161,7 +161,7 @@ Tous les tests doivent être au vert (`pass`).
 
 ## 🌿 7. Workflow Git pour Collaborer à 3
 
-1. **Ne jamais commiter directement sur `main`** : la branche `main` est liée au déploiement automatique sur le serveur de production (Lordi) !
+1. **Ne jamais commiter directement sur `main`** : tout push sur `main` publie automatiquement l'image Docker de production (`ghcr.io/hextazdev/enigme-bot:prod`) !
 2. **Créer une branche par fonctionnalité / bugfix** :
    ```bash
    git checkout -b feat/nom-de-la-feature
