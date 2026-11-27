@@ -289,7 +289,7 @@ test('Lifecycle & Crons Suite', async (t) => {
       await player.update({ a_le_droit_de_jouer: true });
     }
 
-    await endSeason(mockClient);
+    await endSeason(mockClient, Math.random, async () => {});
 
     const refreshed = await Plateau.findByPk(1);
     assert.equal(refreshed.enigme_status, 'season_ended');

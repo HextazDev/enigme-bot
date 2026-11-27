@@ -21,7 +21,7 @@ export interface SeasonEnd<Summary extends object = object> {
   close(players: Joueur[], plateau: Plateau, transaction: Transaction, random: Random): Promise<Summary>;
   parseSummary(value: unknown): Summary;
   /** Public announcement once the transaction is committed. */
-  announce(client: Client, summary: unknown, playerCount: number): Promise<void>;
+  announce(client: Client, summary: unknown, playerCount: number, wait?: (ms: number) => Promise<void>): Promise<void>;
 }
 
 export interface ModeDefinition {

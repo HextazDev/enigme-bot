@@ -9,7 +9,11 @@ import { afterGameAction, withGameLock } from './transaction';
 export interface SeasonClosing { success: boolean; alreadyEnded: boolean; playerCount: number }
 
 /** Close the season once: mode awards, final status and locked players commit together, then the mode announces. */
-export async function endSeason(client: Client, random: Random = Math.random): Promise<SeasonClosing> {
+export async function endSeason(
+  client: Client,
+  random: Random = Math.random,
+  wait?: (ms: number) => Promise<void>,
+): Promise<SeasonClosing> {
   const closing = await withGameLock('season', () => sequelize.transaction(async transaction => {
     const plateau = await Plateau.findByPk(1, { transaction });
     if (!plateau) return { success: false, alreadyEnded: true, playerCount: 0, summary: null, mode: '' };
@@ -25,7 +29,7 @@ export async function endSeason(client: Client, random: Random = Math.random): P
   if (!closing.alreadyEnded && closing.summary) {
     clearAllPendingTimers();
     invalidateBoardCache();
-    await afterGameAction(() => getActiveMode({ game_mode: closing.mode }).getEndgame().announce(client, closing.summary, closing.playerCount));
+    await afterGameAction(() => getActiveMode({ game_mode: closing.mode }).getEndgame().announce(client, closing.summary, closing.playerCount, wait));
   }
   return { success: closing.success, alreadyEnded: closing.alreadyEnded, playerCount: closing.playerCount };
 }

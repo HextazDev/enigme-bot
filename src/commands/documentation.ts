@@ -19,7 +19,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     **4. Mode Fantôme 👻**
     Si tu es inactif pendant 3 tours, tu passes en *Mode Fantôme*. Tu deviens immunisé aux interactions aléatoires et tu es bloqué sur ta case. Tu as un unique Joker pour te réveiller lors de ta prochaine connexion, mais au sommeil suivant, c'est l'élimination définitive !\n\n` +
     `**5. Étoiles Bonus 🌟**\n` +
-    `À la fin de la partie (tour 30), juste avant l'annonce du podium, **2 étoiles bonus** sont décernées aléatoirement parmi 6 catégories : Chance, Malchance, Avancée Max, Avancée Min, Énigmes résolues et Objets utilisés. Chaque étoile bonus rapporte +1 ⭐ !\n\n` +
+    `À la fin de la partie (tour 30), juste avant l'annonce du podium, **2 étoiles bonus** sont décernées aléatoirement et révélées une par une parmi 6 catégories : Chance, Malchance, Avancée Max, Avancée Min, Énigmes résolues et Objets utilisés. Seuls les joueurs actifs (non fantômes) ayant un score > 0 sont éligibles aux étoiles bonus et au podium ; en cas d'égalité, les ex-æquo actifs partagent l'étoile (+1 ⭐ chacun) !\n\n` +
     `**6. Les Blocs Cachés 🤫**\n` +
     `Dès le début de la partie, **4 Blocs Cachés** sont répartis furtivement et aléatoirement sur le plateau. Ils sont invisibles ! Si vous atterrissez par chance sur l'une de ces cases, vous révélerez son contenu ! Il y a un bloc avec **1 Étoile**, un bloc avec **20 pièces**, un avec **10 pièces**, et un avec **5 pièces**.`);
 
